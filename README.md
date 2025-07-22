@@ -30,7 +30,8 @@
 Первый вопрос, который возникает "Как их запустить?".  Довольно очевидно, что нужен носитель с операционной системой(в нашем случае карта памяти) и образ операционной системы.
 
 ### Установка образа операционной системы на носитель 
-[[Файл:Картридер.jpg|мини|Картридер]]
+![Картридер](/pictures/картридер.jpg){: width="50%" } 
+
 С образом операционной системы все довольно просто. 
 
 Как я понял, обычно производитель платы предоставляет тестовый образ для демонстрации ее возможностей. В моем же случае из-за моего желания запустить на платах ALT возникла проблема отсутствия такого образа. С этим мне помог Иван Мельников, который собрал [такой образ](https://ftp.altlinux.org/pub/people/iv/images/riscv64/regular-sunxi-riscv64/) для Lichee RV.
@@ -39,7 +40,7 @@
 
 Распакуем архив с образом
 
-```bash
+```
 $ xz -dk /путь/к/архиву
 ```
 
@@ -47,14 +48,14 @@ $ xz -dk /путь/к/архиву
 
 Узнаем с помощью lsblk название устройства, и если на нем уже есть точки монтирования, размонтируем.
 
-```shell
+```
 $ lsblk
 # umount /dev/sdX* # если что то было примонтировано
 ```
 
 С помощью утилиты dd запишем образ на флешку:
 
-```shell
+```
 # dd if=путь/к/образу.img of=/dev/sdX bs=4M status=progress
 ```
 
@@ -72,14 +73,14 @@ $ lsblk
 
 Теперь понадобится программа для взаимодействия с платой. Например можно воспользоваться tio:
 
-```shell
+```
 \# apt-get install tio
 ```
 
 [[Файл:Соединение UART-преобразователя с Lichee RV.jpg|альт=Соединение UART-преобразователя с Lichee RV|мини|Соединение UART-преобразователя с Lichee RV]]
 Подключимся к UART-преобразователю, и ждем поступления сигналов
 
-```shell
+```
 $ tio -b 115200 /dev/ttyUSBX
 ```
 
@@ -111,7 +112,7 @@ $ tio -b 115200 /dev/ttyUSBX
 
 Ставим:
 
-```shell
+```
 # apt-get install gcc-riscv64-linux-gnu
 ```
 
@@ -143,25 +144,22 @@ Cоздаем пустой проект C/C++ > C Managed Build > Hello World RI
 
 Для этого авторизуемся в root на плате и настроим сеть
 
-<source lang="shell">
+```
+# nmcli dev show # узнаем как называется wifi-интерфейс
+# nmcli dev wifi # узнаем доступные wifi сети
+# nmcli dev wifi connect "название_сети" password "пароль_сети"
 
-\# nmcli dev show # узнаем как называется wifi-интерфейс
-\# nmcli dev wifi # узнаем доступные wifi сети
-\# nmcli dev wifi connect "название_сети" password "пароль_сети"
+# ping ya.ru # проверим, что у появился DNS и выход в интернет
 
-\# ping ya.ru # проверим, что у появился DNS и выход в интернет
-
-\# ip a # узнаем текущий айпишник платы
-\# systemctl status sshd # проверим, работает ли ssh
-</source>
+# ip a # узнаем текущий айпишник платы
+# systemctl status sshd # проверим, работает ли ssh
+```
 
 Если все хорошо, то можно передать скомпилированный бинарник на целевое устройство и там его выполнить
 
-<source lang="shell">
-
-\# scp /путь/до/бинарника имя_пользователя@айпи.нашей.riscv.платы:/куда/положить # пользователь по умолчанию root, пароль altlinux
-
-</source>
+```
+# scp /путь/до/бинарника имя_пользователя@айпи.нашей.riscv.платы:/куда/положить # пользователь по умолчанию root, пароль altlinux
+```
 
 Остается выполнить бинарник и порадоваться.
 
@@ -188,56 +186,58 @@ Cоздаем пустой проект C/C++ > C Managed Build > Hello World RI
 
 Начнем с самого простого :)
 
-<source lang="shell">
-
-\# apt-get install qemu-user-static-binfmt-riscv
-
-</source>
+```
+# apt-get install qemu-user-static-binfmt-riscv
+```
 
 Теперь установим и настроим hasher.Предлагаю обратиться к [руководству по hasher](https://www.altlinux.org/Hasher/Руководство). По данному руководству необходимо выполнить некоторые конкретные пункты:
 
 * Установка
 * Добавление пользователя
 
-После этого<source lang="shell">
+После этого
+
+```
 $ mkdir ~/hasher # создаем директорию для сборочной среды(можно выбрать любое место, но на tmpfs будет быстрее см.руководство)
+```
 
-</source>Далее создаю в папке ~/apt(или любой другой) файлы apt.conf.riscv64-pve и sources.list.riscv-pve. Данная конфигурация укажет хэшеру, откуда брать пакеты для установку в среду. Приведу содержимое файлов.
+Далее создаю в папке ~/apt(или любой другой) файлы apt.conf.riscv64-pve и sources.list.riscv-pve. Данная конфигурация укажет хэшеру, откуда брать пакеты для установку в среду. Приведу содержимое файлов.
 
-apt.conf.riscv64-pve<source lang="shell">
+apt.conf.riscv64-pve
+```
 Dir::Etc::main "/dev/null";
 Dir::Etc::parts "/var/empty";
 Dir::Etc::SourceParts "/var/empty";
 Dir::Etc::sourcelist "/ваш/хомяк/apt/sources.list.riscv-pve";
 
 RPM::Ignore { "vim-plugin-vimruby"; };
-</source>sources.list.riscv-pve<source lang="shell">
+```
+
+sources.list.riscv-pve
+
+```
 rpm [sisyphus-riscv64] http://ftp.altlinux.org/pub/distributions/ALTLinux/ports/riscv64 >
 
 rpm [sisyphus-riscv64] http://ftp.altlinux.org/pub/distributions/ALTLinux/ports/riscv64 >
-</source>
+```
 
 После чего создаем окружение явно с указанием архитектуры, пути к конфигу для пакетного менеджера
 
-<source lang="shell">
+```
 $ hsh --init --target riscv64 --apt-conf ~/hasher/apt/riscv64-pve.conf ~/папка/с/вашим/окружением/hsh-rv64
-</source>
+```
 
 Далее, если нам необходим или будет необходим какой то пакет внутри хэшера можно воспользоваться следующей командой, чтобы поставить в hasher нужное:
 
-<source lang="shell">
-
+```
 $ hsh-install ~/папка/с/вашим/окружением/hsh-rv64 название-необходимого-пакета
-
-</source>
+```
 
 Кроме того, теперь у нас появилась возможность войти в окружение хэшер, и например выполнить в нем какой то скрипт или бинарник.
 
-<source lang="shell">
-
+```
 $ hsh-shell ~/папка/с/вашим/окружением/hsh-rv64
-
-</source>
+```
 
 Фуууух. Дело осталось за малым. Нужно научить мейк передавать chroot в качестве sysroot кросс-компилятору и указывать компилятору откуда брать библиотеки. 
 
@@ -245,44 +245,44 @@ $ hsh-shell ~/папка/с/вашим/окружением/hsh-rv64
 
 Перейдем в Настройки проекта > C/C++ Build > Settings > Tool Settings > GNU RISC-V CROSS C Compiler > Includes
 
-<source lang="shell">
+```
 Include paths = /путь/до/чрута/хэшера/usr/include
-</source>
+```
 
 Перейдем в Настройки проекта > C/C++ Build > Settings > Tool Settings > GNU RISC-V CROSS C Linker > Libraries
 
-<source lang="shell">
+```
 Library search path = /путь/до/чрута/хэшера/usr/lib
-</source>
+```
 
 Укажем chroot хэшера в качестве sysroot: 
 
 Перейдем в Настройки проекта > C/C++ Build > Settings > Tool Settings > GNU RISC-V CROSS C Compiler > Command
 
-<source lang="shell">
+```
 Command=${cross_prefix}${cross_c} --sysroot ~/hasher/hsh-rv64/chroot ${cross_suffix}
-</source>
+```
 
 ### Исполнение программы в изолированной среде 
 
 Для того, чтобы что-то выполнить в hasher, это что-то нужно туда поместить. Я решил поступить в лоб, и после компиляции бинарника копировать его в корень chroot хэшера, указав это в параметре make, в настройка сборки.
 
-<source lang="shell">
+```
 Post-build steps Command=cp ~/eclipse-workspace/путь/к/созданному/бинарнику.elf ~/путь/к/chroot
-</source>
+```
 Пора настроить запуск нашего бинарника: в Run Configuration проекта указываем в параметре C/C++ Application 
 
-<source lang="shell">
+```
 /абсолютный/путь/в/chroot/бинарник.elf
-</source>
+```
  
 На кураже совсем забыл указать, а зачем во всей это схеме нужен был пакет qemu-user-static-binfmt-riscv. Спасибо sorochaniv@basealt.ru за внимание к этому подразделу. Данный пакет позволяет запускать бинарники, скомпилированные под другую архитектуру. 
 
 Только чтобы все заработало обязательно нужно во вкладке Environment указать значение переменной окружения. Спасибо за подсказку ''от опытного коллеги''.
 
-<source lang="shell">
+```
 QEMU_LD_PREFIX=/абсолютный/путь/к/chroot
-</source>
+```
 
 Данная переменная укажет,где находится динамический загрузчик (в нашем случае '/lib64/ld-linux-riscv64-lp64d.so.1'), который загружает и связывает динамические библиотеки при запуске программы.
 
