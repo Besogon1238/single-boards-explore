@@ -8,7 +8,7 @@
 Мои контакты для связи — почта (taranev@basealt.ru) и телеграмм (@Yayatoureeeeee).
 
 
-# Оглавление
+## Оглавление
 - [Введение](#intro)
 - [Старт работы с одноплатниками](#start)
   - [Установка образа операционной системы](#install)
@@ -22,6 +22,9 @@
   - [Запуск бинарника в hasher](#running_in_hasher)
   - [Отладка в hasher](#debugging_in_hasher)
   - [Рабочие способы отладки](#working_debugging)
+- [Идеи применения одноплатников](#ideas)
+  - [Использование в качестве MQTT-клиента](#mqtt-client)
+- [Подробнее про образы ОС](#image_deep)
 - [Потенциально полезные заметки](#else_useful_info)
 
 
@@ -389,11 +392,13 @@ QEMU_LD_PREFIX=/абсолютный/путь/к/chroot
 
 Через некоторое время я выяснил, что, по видимому, вся проблема заключается в том, что при подключении плагин загружает переменные окружения из shell удаленной машины и просто не дожидается ответа. За время на ответ отвечает параметр shellEnvironmentResolutionTimeout* из настроек VSCodium. Его увеличение позволяет решить проблему.
 
+P.S. Иногда все равно требуется 2 попытки подключения...
+
 После этого отлаживать код на Lichee RV и Mango PI станет возможным, но с кокретными ограничениями в производительности. Скомпилировать и запустить Hello-World программу можно приблизительно за 10~ секунд :)
 
 P.S Чтобы начать работать на удаленной машине в открытом новом окне редактора идем в *Главное меню* > *File* > *Open Folder*.
 
-#### Компиляция, запуск и отладка на удаленной машине
+#### Компиляция, запуск и отладка C/C++ проектов на удаленной машине
 
 На данном этапе каждому предоставлен полный карт-бланш на настройку окружения разработки и редактора кода. Я поделюсь собственным наиболее удобным для себя сетапом. Прежде чем перейти к его описанию напомню, что на этом шаге на плате уже должен быть установлен gcc, а также необходимо установить отладчик gdb из репозитория.
 
@@ -460,12 +465,214 @@ int main() {
 
 Вот теперь можно с комфортом можно делать все и сразу на удаленной машине!
 
+P.S. Утановив расширение VSCodium для Python также можно работать и на нем, но не дебажить :(.
+
+<a name="ideas></a>
+
+## Идеи применения одноплатников
+
+В данном подразделе планируется фиксировать всевозможные идеи(а может и реализацию) практического применения одноплатников в учебных целях.
+
+<a name="mqtt-client></a>
+
+### Использование в качестве MQTT-клиента
+
+Здесь про MQTT....
+
+Здесь про необходимые пакеты и параметр линковщика
+
+<details>
+
+<summary>Код брокера</summary>
+
+```python
+
+import paho.mqtt.client as mqtt
+import time
+import json
+
+devices = {}
+
+def on_connect(client, userdata, flags, rc):
+    print(f"Connected with result code {rc}")
+    client.subscribe("lichee_rv/stats")
+
+def on_message(client, userdata, msg):
+    try:
+        payload = msg.payload.decode()
+        print(f"Raw message received: {payload}")
+        data = json.loads(payload)
+        devices[msg.topic] = data
+        print(f"Parsed data: {data}") 
+    except Exception as e:
+        print(f"Error processing message: {e}")
+
+client = mqtt.Client()
+client.on_connect = on_connect
+client.on_message = on_message
+
+try:
+    client.connect("10.64.129.179", 1883, 60)
+    print("Connecting to broker...")
+    client.loop_forever()
+except KeyboardInterrupt:
+    client.disconnect()
+    print("Disconnected")
+except Exception as e:
+    print(f"Connection error: {e}")
+
+```
+
+</details>
+
+
+<details>
+
+<summary>Код клиента</summary>
+
+```C
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <mosquitto.h>
+
+#define MQTT_HOST "10.64.129.179"
+#define MQTT_PORT 1883
+#define MQTT_TOPIC "lichee_rv/stats"
+#define KEEPALIVE 60
+
+float get_cpu_usage() {
+    FILE* fp = fopen("/proc/stat", "r");
+    if (!fp) return -1;
+
+    unsigned long user, nice, system, idle;
+    fscanf(fp, "cpu %lu %lu %lu %lu", &user, &nice, &system, &idle); // read cpu info
+    fclose(fp);
+
+    unsigned long total = user + nice + system + idle;
+    static unsigned long prev_total = 0, prev_idle = 0;
+
+    float usage = 0.0;
+    if (prev_total > 0) {
+        float diff_idle = idle - prev_idle;
+        float diff_total = total - prev_total;
+        usage = 100.0 * (1.0 - diff_idle / diff_total); // calculate cpu usage
+    }
+
+    prev_total = total;
+    prev_idle = idle;
+    return usage;
+}
+
+float get_ram_usage() {
+    FILE* fp = fopen("/proc/meminfo", "r");
+    if (!fp) return -1;
+
+    char line[128];
+    unsigned long total = 0, free = 0;
+
+    while (fgets(line, sizeof(line), fp)) {
+        if (strstr(line, "MemTotal:")) sscanf(line, "MemTotal: %lu kB", &total);
+        if (strstr(line, "MemFree:")) sscanf(line, "MemFree: %lu kB", &free);
+    }
+    fclose(fp);
+
+    if (total == 0) return -1;
+    return 100.0 * (total - free) / total;
+}
+
+int main() {
+    struct mosquitto *mosq = NULL;
+    char payload[128];
+    float cpu, ram;
+
+    mosquitto_lib_init();
+    mosq = mosquitto_new(NULL, true, NULL);
+    if (!mosq) {
+        fprintf(stderr, "Error: Out of memory.\n");
+        return 1;
+    }
+
+    if (mosquitto_connect(mosq, MQTT_HOST, MQTT_PORT, KEEPALIVE)) {
+        fprintf(stderr, "Unable to connect to MQTT broker.\n");
+        return 1;
+    }
+
+    printf("MQTT client started. Press Ctrl+C to exit.\n");
+
+    while (1) {
+        cpu = get_cpu_usage();
+        ram = get_ram_usage();
+
+        if (cpu < 0 || ram < 0) {
+            fprintf(stderr, "Error reading system stats\n");
+            sleep(1);
+            continue;
+        }
+
+        snprintf(payload, sizeof(payload),"{\"cpu\":%.2f,\"ram\":%.2f}", cpu, ram);
+
+        int ret = mosquitto_publish(mosq, NULL, MQTT_TOPIC,strlen(payload), payload, 0, false);
+
+        if (ret != MOSQ_ERR_SUCCESS) {
+            fprintf(stderr, "Error publishing: %s\n", mosquitto_strerror(ret));
+        } else {
+            printf("Sent: %s\n", payload);
+        }
+
+        sleep(1);
+    }
+
+    mosquitto_destroy(mosq);
+    mosquitto_lib_cleanup();
+    return 0;
+}
+
+```
+
+</details>
+
+
+<a name="image_deep"></a>
+
+
+## Подробнее об образах ОС
+
+По мере погружения в разработку под одноплатники у меня начал нарастать интерес по устройству механизма развертывания операционной системы на плате.
+
+Я уже демонстрировал в подразделе ["Установка образа операционной системы"](#install)
+
+...
+
+alt-rootfs-installer 
+
+
 <a name="else_useful_info"></a>
 
-# Потенциально полезные заметки 
+## Потенциально полезные заметки 
 
 Здесь размещается материал, который я не могу отнести к чему то конкретному, но опыт которого может быть применен мной или кем-то другим в будущем.
 
-
 [Работа с логическим анализатором](https://github.com/Besogon1238/SSU-BaseALT/blob/main/Subpages/Logic%20Analyser.md)
 
+## Материалы к ознакомлению
+
+### Linux на одноплатниках ARM64. Семинар в лаборатории.
+
+Повседневно мы пользуемся какими-то прикладными программами. Но для работы им необходима операционная система, которая абстрагирует работу с физическим оборудованием. На этом семинаре расскажем как происходит загрузка ОС на одноплатниках с процессорами ARM и в чём этот процесс отличается от того, что происходит на amd64.
+
+❓ На семинаре были рассмотрены следующие темы:
+
+✅ Процесс загрузки систем arm64 и amd64.
+
+✅ Погружение в стек технологий, используемых для загрузки компьютеров.
+
+✅ Что нужно для того, чтобы Linux мог загрузиться на конкретном компьютере?
+
+Дата проведения семинара: 24 апреля
+
+Запись трансляции: [Linux на одноплатниках ARM64](https://vkvideo.ru/video-197903652_456239109)
+
+Докладчик: Гущин Андрей — младший программист 2 категории
