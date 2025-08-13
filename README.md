@@ -108,6 +108,12 @@ $ lsblk
 
 ![UART-преобразователь](/pictures/соелинение%20переходника%20с%20GPIO%20ПЛАТЫ.jpg)
 
+Чтобы определить имя устройства в системе можно почитать логи dmesg. Наприме так:
+
+```
+dmesg | grep -i "tty"
+```
+
 Подключимся к UART-преобразователю, и ждем поступления сигналов
 
 ```
@@ -511,8 +517,12 @@ MQTT (Message Queuing Telemetry Transport) – это легковесный п�
 Для написания брокера, выполняющего одновременно функцию подписчика будем использовать питоновскую реализацию paho.
 
 ```
-# python3-module-paho
+# apt-get install python3-module-paho
 ```
+
+В моем примере брокер-подписчик, выступая в качестве брокера в отдельном потоке высылает в свою локальную сеть бродкаст-запросы, чтобы дать возможность клиентскому устройству понять, куда ему подключаться.
+
+Выступая же в качестве клиента он подписывается на топик *lichee_rv/stats*, и при получении данных просто выводит их в консоль.
 
 <details>
 
@@ -523,7 +533,6 @@ import json
 import time
 import socket
 
-devices = {}
 
 def on_connect(client, userdata, flags, rc):
     print(f"Connected with result code {rc}")
@@ -534,7 +543,6 @@ def on_message(client, userdata, msg):
         payload = msg.payload.decode()
         print(f"Raw message received: {payload}")
         data = json.loads(payload)
-        devices[msg.topic] = data
         print(f"Parsed data: {data}") 
     except Exception as e:
         print(f"Error processing message: {e}")
@@ -603,131 +611,87 @@ except Exception as e:
 
 </code></pre>
 
+
 </details>
+
+В свою очередь клиент-издатель, ищет в сети брокера, подключается к нему. После чего вычисляет текущую нагрузку на ЦП и использование оперативной памяти(ну а что еще измерять, если нету датчиков) и отправляет с нужным топиком.
+
 
 <details>
 
 <summary>Главная функция клиента-издателя</summary>
 
-```C
+<pre><code>
 
-#ifndef CLIENT_H
-#define CLIENT_H
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <mosquitto.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+#include "client_utils.h"
 
-#define BROADCAST_PORT 54545
-#define BROADCAST_MAGIC "MQTT_BROKER:"
+int main() {
 
-#define MQTT_PORT 1883
-#define MQTT_TOPIC "lichee_rv/stats"
-#define KEEPALIVE 60
-#endif
-
-static char* discover_broker() {
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        perror("UDP socket error");
-        return NULL;
+    char* broker_ip = discover_broker();
+    if (!broker_ip) {
+        fprintf(stderr, "Failed to discover broker\n");
+        return 1;
     }
 
-    // Allow broadcast messages
-    int broadcast_enable = 1;
-    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast_enable, sizeof(broadcast_enable));
+    printf("Discovered broker at %s\n", broker_ip);
 
-    // Configure reciever address
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(BROADCAST_PORT);
-    addr.sin_addr.s_addr = INADDR_ANY;
-
-    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        perror("UDP bind error");
-        close(sock);
-        return NULL;
+    struct mosquitto *mosq = mosquitto_new(NULL, true, NULL);
+    if (mosquitto_connect(mosq, broker_ip, MQTT_PORT, KEEPALIVE)) {
+        fprintf(stderr, "MQTT connection failed\n");
+        free(broker_ip);
+        return 1;
     }
 
-    printf("Listening for broker broadcasts...\n");
-    char buffer[256];
-    int len = recv(sock, buffer, sizeof(buffer) - 1, 0);
-    close(sock);
+    char payload[128];
+    float cpu, ram;
 
-    if (len <= 0) {
-        perror("UDP receive error");
-        return NULL;
+    mosquitto_lib_init();
+
+    if (!mosq) {
+        fprintf(stderr, "Error: Out of memory.\n");
+        return 1;
     }
 
-    buffer[len] = '\0';
-    printf("Received broadcast: %s\n", buffer);
-
-    // Verify that message from broker
-    if (strstr(buffer, BROADCAST_MAGIC) != buffer) {
-        fprintf(stderr, "Invalid broadcast message\n");
-        return NULL;
+    if (mosquitto_connect(mosq, broker_ip, MQTT_PORT, KEEPALIVE)) {
+        fprintf(stderr, "Unable to connect to MQTT broker.\n");
+        return 1;
     }
 
-    // Parsing ip and port from format "MQTT_BROKER:IP:PORT")
-    char* ip = buffer + strlen(BROADCAST_MAGIC);
-    char* port_str = strchr(ip, ':');
-    if (!port_str) {
-        fprintf(stderr, "Invalid broadcast format\n");
-        return NULL;
+    free(broker_ip);
+
+    printf("MQTT client started.\n");
+
+    while (1) {
+        cpu = get_cpu_usage();
+        ram = get_ram_usage();
+
+        if (cpu < 0 || ram < 0) {
+            fprintf(stderr, "Error reading system stats\n");
+            sleep(1);
+            continue;
+        }
+
+        snprintf(payload, sizeof(payload),"{\"cpu\":%.2f,\"ram\":%.2f}", cpu, ram);
+
+        int ret = mosquitto_publish(mosq, NULL, MQTT_TOPIC,strlen(payload), payload, 0, false);
+
+        if (ret != MOSQ_ERR_SUCCESS) {
+            fprintf(stderr, "Error publishing: %s\n", mosquitto_strerror(ret));
+        } else {
+            printf("Sent: %s\n", payload);
+        }
+
+        sleep(1);
     }
 
-    *port_str = '\0';  // Split ip and port
-    int port = atoi(port_str + 1);
-
-    return strdup(ip);
+    mosquitto_destroy(mosq);
+    mosquitto_lib_cleanup();
+    return 0;
 }
 
-static float get_cpu_usage() {
-    FILE* fp = fopen("/proc/stat", "r");
-    if (!fp) return -1;
 
-    unsigned long user, nice, system, idle;
-    fscanf(fp, "cpu %lu %lu %lu %lu", &user, &nice, &system, &idle); // read cpu info
-    fclose(fp);
-
-    unsigned long total = user + nice + system + idle;
-    static unsigned long prev_total = 0, prev_idle = 0;
-
-    float usage = 0.0;
-    if (prev_total > 0) {
-        float diff_idle = idle - prev_idle;
-        float diff_total = total - prev_total;
-        usage = 100.0 * (1.0 - diff_idle / diff_total); // calculate cpu usage
-    }
-
-    prev_total = total;
-    prev_idle = idle;
-    return usage;
-}
-
-static float get_ram_usage() {
-    FILE* fp = fopen("/proc/meminfo", "r");
-    if (!fp) return -1;
-
-    char line[128];
-    unsigned long total = 0, free = 0;
-
-    while (fgets(line, sizeof(line), fp)) {
-        if (strstr(line, "MemTotal:")) sscanf(line, "MemTotal: %lu kB", &total);
-        if (strstr(line, "MemFree:")) sscanf(line, "MemFree: %lu kB", &free);
-    }
-    fclose(fp);
-
-    if (total == 0) return -1;
-    return 100.0 * (total - free) / total;
-}
-
-```
+</code></pre>
 
 </details>
 
@@ -735,7 +699,7 @@ static float get_ram_usage() {
 <details>
 <summary>Вспомогательные функции клиента-издателя</summary>
 
-```C
+<pre><code>
 #ifndef CLIENT_H
 #define CLIENT_H
 #include <stdio.h>
@@ -763,7 +727,7 @@ static char* discover_broker() {
     }
 
     // Allow broadcast messages
-    int broadcast_enable = 1;
+        int broadcast_enable = 1;
     setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast_enable, sizeof(broadcast_enable));
 
     // Configure reciever address
@@ -851,7 +815,7 @@ static float get_ram_usage() {
     if (total == 0) return -1;
     return 100.0 * (total - free) / total;
 }
-```
+</code></pre>
 </details>
 
 
@@ -862,12 +826,17 @@ static float get_ram_usage() {
 
 По мере погружения в разработку под одноплатники у меня начал нарастать интерес по устройству механизма развертывания операционной системы на плате.
 
-Я уже демонстрировал в подразделе ["Установка образа операционной системы"](#install)
+Я уже демонстрировал в подразделе ["Установка образа операционной системы"](#install) самый простой вариант записи образа на носитель.
 
-...
+Там я использовал уже подготовленный для lichee_rv образ с кастомным ядром 6.1.0-d1-un-alt. Запуск с данным образом позволяет использовать всю необходимую перефирию: сеть и графику(хотя ее этому одноплатнику ой как тяжело тащить).
 
-alt-rootfs-installer...
+Но вообще, существуют и [регулярные сборки для riscv64](https://www.altlinux.org/Regular/riscv64) с более актуальным ядром. Другое дело, что интересующий нас SoC поддерживает регулярные сборки только теоретически. На деле, запись такого образа на lichee_rv позволит работать в системе, но без графики и сети, что ну..неудобно.
 
+Кстати говоря, в статьях про [регулярные сборки](https://www.altlinux.org/Regular) и [регулярные сборки для riscv](https://www.altlinux.org/Ports/riscv64) упоминается инструмент [alt-rootfs-installer](https://www.altlinux.org/Write/rootfs).
+
+В случае необходимости установить ОС «Альт» на устройство без реализованных BIOS или EFI требуется дополнительный загрузчик. В основном для этой цели используется u-boot. Он берет на себя первоначальную инициализацию необходимых для загрузки устройств, загружает в память ядро linux, возможные initrd и dtb и передает управление ядру. 
+
+За примерами установки rootfs из архива на SD-карту или преобразования архива в img-образ предлагаю обратиться по ссылкам выше.
 
 <a name="else_useful_info"></a>
 
