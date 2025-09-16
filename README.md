@@ -10,23 +10,11 @@
 
 ## Оглавление
 - [Введение](#intro)
-- [Старт работы с одноплатниками](/Subpages/Additional_Subpages/Start.md)
-  - [Установка образа операционной системы](#install)
-  - [Включение и начало работы с платой](#boot)
-- [Написание кода под RISCV-архитектуру](#coding)
-  - [Кросс-компилятор](#cross-compiler)
-  - [IDE или не IDE](#ide)
-  - [Настройка сборки через IDE](#compile_in_IDE)
-  - [Запуск бинарника на плате](#test_running)
-  - [Сборка в изолированной среде (hasher)](#compile_in_hasher)
-  - [Запуск бинарника в hasher](#running_in_hasher)
-  - [Отладка в hasher](#debugging_in_hasher)
-  - [Рабочие способы отладки](#working_debugging)
-- [Идеи применения одноплатников](#ideas)
-  - [Использование в качестве MQTT-клиента](#mqtt-client)
-- [Подробнее про образы ОС](#image_deep)
-  - [Личный опыт](#self_expirience_in_image)
-- [Потенциально полезные заметки](#else_useful_info)
+- [Старт работы с одноплатниками](/Subpages/Start.md)
+- [Написание кода под RISCV-архитектуру](/Subpages/Coding_for_riscv64.md)
+- [Идеи применения одноплатников](/Subpages/Ideas.md)
+- [Подробнее про образы ОС](/Subpages/Create_images.md)
+- [Потенциально полезные заметки](/Subpages/Else_useful_info.md)
 
 
 <a name="intro"></a>
