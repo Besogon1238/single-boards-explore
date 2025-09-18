@@ -41,6 +41,16 @@ $ lsblk
 # dd if=путь/к/образу.img of=/dev/sdX bs=4M status=progress
 ```
 
+Кстати ровно тоже самое можно сделать командой
+```
+xzcat  <путь/до/образа.img.xz>| dd of=/dev/sdX bs=4M status=progress
+```
+Также в версии [alt-rootfs-installer](https://www.altlinux.org/Write/rootfs) 0.3.0 появилась возможность записывать образы img, img.gz, img.xz. Для этого вместо опции --rootfs= нужно указать --image-in=
+
+```
+alt-rootfs-installer --image-in=<путь/до/входного_образа.img> --media=/dev/mmcblkX --target=<цель>
+```
+
 После указанных манипуляций мы должны получить карту памяти с готовой операционной системой.
 
 <a name="boot"></a>
