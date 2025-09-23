@@ -13,7 +13,8 @@
 - [Старт работы с одноплатниками](/Subpages/Start.md)
 - [Написание кода под RISCV-архитектуру](/Subpages/Coding_for_riscv64.md)
 - [Идеи применения одноплатников](/Subpages/Ideas.md)
-- [Подробнее про образы ОС](/Subpages/Create_images.md)
+- [Создание компонентов образа](/Subpages/Create_images_prep.md)
+- [Сборка образа из компонентов](/Subpages/Create_images.md)
 - [Потенциально полезные заметки](/Subpages/Else_useful_info.md)
 
 
