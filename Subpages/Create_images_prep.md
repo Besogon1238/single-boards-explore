@@ -364,7 +364,7 @@ rpm [sisyphus-riscv64] http://ftp.altlinux.org/pub/distributions/ALTLinux/ports/
 Я же приведу конкретный пример его установки в следующей [главе](/Subpages/Create_images.md)).
 
 
-
+[Далее: Сборка образа из компонентов](/Subpages/Create_images.md)
 
 
 

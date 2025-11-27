@@ -346,3 +346,4 @@ static float get_ram_usage() {
 </code></pre>
 </details>
 
+[Далее: Создание компонентов образа](/Subpages/Create_images_prep.md)

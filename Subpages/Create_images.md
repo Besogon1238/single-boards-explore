@@ -139,3 +139,5 @@ $ sudo tar -xJpf /путь/до/rootfs.tar.xz -C  /путь/до_раздела/
 ```
 $ cat /dev/sdX > imagefile.img
 ```
+
+[Сборка образа из компонентов](/Subpages/Create_images.md)
