@@ -130,7 +130,7 @@ Cоздаем пустой проект C/C++ > C Managed Build > Hello World RI
 * Передать chroot hasher мейку в качестве sysroot для кросс-компилятора
 * Проверить результат работы в хэшере
 
-Начнем с самого простого :)
+Начнем с самого простого. Обязательно ставим пакет binfmt, который позволит запускать на хостовой системе riscv-бинарники.
 
 ```
 # apt-get install qemu-user-static-binfmt-riscv
@@ -147,36 +147,35 @@ Cоздаем пустой проект C/C++ > C Managed Build > Hello World RI
 $ mkdir ~/hasher # создаем директорию для сборочной среды(можно выбрать любое место, но на tmpfs будет быстрее см.руководство)
 ```
 
-Далее создаю в папке ~/apt(или любой другой) файлы apt.conf.riscv64-pve и sources.list.riscv-pve. Данная конфигурация укажет хэшеру, откуда брать пакеты для установку в среду. Приведу содержимое файлов.
+Далее создаем в папке ~/apt(или любой другой) файлы riscv64.conf и sources.list.riscv64. Данная конфигурация укажет хэшеру, откуда брать пакеты для установку в среду. Приведу содержимое файлов.
 
-apt.conf.riscv64-pve
+riscv64.conf
 ```
 Dir::Etc::main "/dev/null";
 Dir::Etc::parts "/var/empty";
 Dir::Etc::SourceParts "/var/empty";
-Dir::Etc::sourcelist "/ваш/хомяк/apt/sources.list.riscv-pve";
-
-RPM::Ignore { "vim-plugin-vimruby"; };
+Dir::Etc::sourcelist "/ваш/хомяк/apt/sources.list.riscv";
 ```
 
-sources.list.riscv-pve
+sources.list.riscv64
 
 ```
-rpm [sisyphus-riscv64] http://ftp.altlinux.org/pub/distributions/ALTLinux/ports/riscv64 >
+rpm [sisyphus-riscv64] http://ftp.altlinux.org/pub/distributions/ALTLinux/ports/riscv64 Sisyphus/riscv64 classic
 
-rpm [sisyphus-riscv64] http://ftp.altlinux.org/pub/distributions/ALTLinux/ports/riscv64 >
+rpm [sisyphus-riscv64] http://ftp.altlinux.org/pub/distributions/ALTLinux/ports/riscv64 Sisyphus/noarch  classic
+
 ```
 
 После чего создаем окружение явно с указанием архитектуры, пути к конфигу для пакетного менеджера
 
 ```
-$ hsh --init --target riscv64 --apt-conf ~/hasher/apt/riscv64-pve.conf ~/папка/с/вашим/окружением/hsh-rv64
+$ hsh --init --target riscv64 --apt-conf ~/apt/riscv64 ~/папка/с/вашим/окружением/
 ```
 
 Далее, если нам необходим или будет необходим какой то пакет внутри хэшера можно воспользоваться следующей командой, чтобы поставить в hasher нужное:
 
 ```
-$ hsh-install ~/папка/с/вашим/окружением/hsh-rv64 название-необходимого-пакета
+$ hsh-install ~/папка/с/вашим/окружением/ название-необходимого-пакета
 ```
 
 Кроме того, теперь у нас появилась возможность войти в окружение хэшер, и например выполнить в нем какой то скрипт или бинарник.
