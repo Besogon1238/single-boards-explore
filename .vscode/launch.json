@@ -8,8 +8,8 @@
       "args": [],
       "stopAtEntry": false,
       "externalConsole": false,
-      "cwd": "/home/taranev/work_repos/single-boards-explore/code_for_riscv/rt-tests",
-      "program": "/home/taranev/work_repos/single-boards-explore/code_for_riscv/rt-tests/build/Debug/outDebug",
+      "cwd": "/home/taranev/work_repos/single-boards-explore/code_for_riscv",
+      "program": "/home/taranev/work_repos/single-boards-explore/code_for_riscv/build/Debug/outDebug",
       "MIMode": "gdb",
       "miDebuggerPath": "gdb",
       "setupCommands": [
