@@ -341,8 +341,8 @@ if __name__ == "__main__":
 
 Для этого выполняем слудующее:
 
-```
 # Подключаемся к интернету с помощью nmcli dev wifi
+```
 
 # mkdir /var/cache/apt/archives/partial
 
