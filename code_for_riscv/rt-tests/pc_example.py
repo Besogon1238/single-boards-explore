@@ -264,7 +264,6 @@ class ArduinoDataReceiver:
                         print("  status - Получить текущий статус измерений")
                         print("  reset  - Сбросить текущие измерения")
                         print("  plot   - Построить график последних данных")
-                        print("  save   - Сохранить все данные сессий")
                         print("  exit   - Завершить программу")
                     elif cmd == "exit":
                         print("Завершение работы...")

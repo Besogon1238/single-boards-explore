@@ -40,7 +40,7 @@ void setup() {
   pinMode(PIN_OUT, OUTPUT);
   pinMode(PIN_IN, INPUT_PULLUP);
   
-  attachInterrupt(digitalPinToInterrupt(PIN_IN), onResponse, RISING);
+  attachInterrupt(digitalPinToInterrupt(PIN_IN), onResponse, FALLING);
   interrupts();
   
   // Генерируем уникальный ID сессии

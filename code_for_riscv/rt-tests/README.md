@@ -9,9 +9,9 @@
 - Arduino Mega 2560 - инструмент тестирования;
 - ПК - место сбора данных и их визуализации.
 
-[Пример визуализации результатов](/code_for_riscv/rt-tests/results/avg_plot_session_858947_20260119_180552.png)
+[Пример визуализации результатов](/code_for_riscv/rt-tests/results/avg_plot_session_825333_20260119_191227.png)
 
-[JSON со статистикой](/code_for_riscv/rt-tests/results/session_858947_20260119_180552.json)
+[JSON со статистикой](/code_for_riscv/rt-tests/results/session_825333_20260119_191227.json)
 
 Схема подключения:
 
