@@ -6,10 +6,9 @@
 
 #define CHIP_PATH "/dev/gpiochip0"
 #define GPIO_LINE 4
-#define GPIO_INPUT_PLACE_IN_LINE 16   // Input pin (GPIO 140)
+#define GPIO_INPUT_PLACE_IN_LINE 15   // Input pin (GPIO 140)
 #define GPIO_OUTPUT_PLACE_IN_LINE 12  // Output pin (GPIO 144)
 
-#define PULSE_NS 1000L  // Small nanosleep to avoid CPU overuse
 
 volatile sig_atomic_t stop_flag = 0;
 
@@ -53,7 +52,7 @@ int main()
         return 1;
     }
     gpiod_line_settings_set_direction(in_settings, GPIOD_LINE_DIRECTION_INPUT);
-    gpiod_line_settings_set_edge_detection(in_settings, GPIOD_LINE_EDGE_RISING);
+    gpiod_line_settings_set_edge_detection(in_settings, GPIOD_LINE_EDGE_BOTH);
 
     // Configure output pin
     out_settings = gpiod_line_settings_new();
@@ -110,14 +109,26 @@ int main()
         return 1;
     }
 
+
+    struct gpiod_edge_event_buffer *event_buffer;
+
+    int event_buf_size = 1;
+	event_buffer = gpiod_edge_event_buffer_new(event_buf_size);
+	if (!event_buffer) {
+        perror("Failed to create event buffer");
+		return 1;
+	}
+
     printf("Running. Waiting for input on GPIO %u...\n", offsets[0]);
     printf("Output on GPIO %u\n", offsets[1]);
 
     int last_value = 0;
     int wait_status = 0;
 
+    int counter = 0;
+
     while (!stop_flag) {
-        wait_status = gpiod_line_request_wait_edge_events(request, -1);
+        wait_status = gpiod_line_request_read_edge_events(request, event_buffer,event_buf_size);;
 
         // Read input pin value
         int value = gpiod_line_request_get_value(request, offsets[0]);
@@ -129,20 +140,21 @@ int main()
 
         // Detect rising edge (0 -> 1)
         if (last_value == 0 && value == 1) {
-            clock_gettime(CLOCK_MONOTONIC, &current_time);
+            /*clock_gettime(CLOCK_MONOTONIC, &current_time);
             if (!first_pulse) {
                 interval_ns = (current_time.tv_sec - last_rise_time.tv_sec) * 1000000000L;
                 interval_ns += (current_time.tv_nsec - last_rise_time.tv_nsec);
-                // printf("Rising edge detected! Interval: %ld ns \n", interval_ns);
+                printf("Rising edge detected! Interval: %ld us \n", interval_ns/1000);
             } else {
-                // printf("First rising edge detected \n");
+                printf("First rising edge detected \n");
                 first_pulse = 0;
-            }
+                last_rise_time = current_time;
+            }*/
 
-            last_rise_time = current_time;
             gpiod_line_request_set_value(request, offsets[1], 1);
         } else if (last_value == 1 && value == 0) {
-            // printf("Falling edge detected! Stop pulse...\n");
+            /*counter++;
+            printf("Falling edge detected! Pulse %d \n",counter);*/
             gpiod_line_request_set_value(request, offsets[1], 0);
         }
 

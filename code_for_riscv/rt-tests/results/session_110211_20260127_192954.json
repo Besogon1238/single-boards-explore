@@ -1,0 +1,72 @@
+{
+  "session_id": 110211,
+  "groups_count": 10,
+  "measurements_per_group": 100,
+  "total_measurements": 1000,
+  "timestamp": 106486,
+  "device": "Arduino Mega",
+  "avg_response_us": [
+    258.32,
+    237.88,
+    295.92,
+    300.56,
+    239.6,
+    234.88,
+    237.32,
+    233.12,
+    241.12,
+    236.2
+  ],
+  "rms_response_us": [
+    240.2646,
+    76.07461,
+    418.6312,
+    407.5492,
+    80.80891,
+    45.62834,
+    80.59195,
+    38.4503,
+    94.73852,
+    77.0815
+  ],
+  "avg_period_us": [
+    19765.32,
+    19765.64,
+    19765.36,
+    19765.24,
+    19765.52,
+    19765.4,
+    19765.52,
+    19765.48,
+    19765.48,
+    19765.68
+  ],
+  "rms_period_us": [
+    2843.796,
+    2825.319,
+    2885.304,
+    2882.671,
+    2825.555,
+    2824.006,
+    2825.513,
+    2823.786,
+    2826.399,
+    2825.455
+  ],
+  "statistics": {
+    "response_time": {
+      "overall_avg_us": 251.492,
+      "overall_rms_us": 155.9819
+    },
+    "period": {
+      "overall_avg_us": 19765.46,
+      "overall_rms_us": 2838.78
+    }
+  },
+  "parameters": {
+    "delay_between_pulses_us": 10000,
+    "groups": 10,
+    "measurements_per_group": 100,
+    "skip_first_per_group": 2
+  }
+}

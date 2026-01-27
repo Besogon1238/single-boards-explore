@@ -141,6 +141,70 @@ class ArduinoDataReceiver:
         
         return False
     
+    def plot_data(self, data):
+        """Построение 4 графиков для усредненных данных"""
+        if "avg_response_us" not in data:
+            return
+        
+        avg_response = data['avg_response_us']
+        rms_response = data['rms_response_us']
+        avg_period = data['avg_period_us']
+        rms_period = data['rms_period_us']
+        
+        # Создаем 4 графика (2x2)
+        fig, axes = plt.subplots(ncols=2, nrows=2, figsize=(14, 10), layout="constrained")
+        fig.suptitle(f"Усредненные измерения - Сессия {data.get('session_id', 'N/A')}")
+        
+        # 1. График среднего времени отклика по группам
+        axes[0, 0].plot(range(len(avg_response)), avg_response, 'b.-', markersize=8, linewidth=2)
+        axes[0, 0].set_title('Среднее время отклика по группам')
+        axes[0, 0].set_xlabel('Номер группы')
+        axes[0, 0].set_ylabel('Время (мкс)')
+        axes[0, 0].grid(True, alpha=0.3)
+        # Добавляем значения на точки
+        for i, v in enumerate(avg_response):
+            axes[0, 0].text(i, v, f'{v:.1f}', ha='center', va='bottom', fontsize=8)
+        
+        # 2. График СКО времени отклика по группам
+        axes[0, 1].plot(range(len(rms_response)), rms_response, 'r.-', markersize=8, linewidth=2)
+        axes[0, 1].set_title('СКО времени отклика по группам')
+        axes[0, 1].set_xlabel('Номер группы')
+        axes[0, 1].set_ylabel('СКО (мкс)')
+        axes[0, 1].grid(True, alpha=0.3)
+        # Добавляем значения на точки
+        for i, v in enumerate(rms_response):
+            axes[0, 1].text(i, v, f'{v:.2f}', ha='center', va='bottom', fontsize=8)
+        
+        # 3. График среднего периода по группам
+        axes[1, 0].plot(range(len(avg_period)), avg_period, 'g.-', markersize=8, linewidth=2)
+        axes[1, 0].set_title('Средний период по группам')
+        axes[1, 0].set_xlabel('Номер группы')
+        axes[1, 0].set_ylabel('Период (мкс)')
+        axes[1, 0].grid(True, alpha=0.3)
+        # Добавляем значения на точки
+        for i, v in enumerate(avg_period):
+            axes[1, 0].text(i, v, f'{v:.1f}', ha='center', va='bottom', fontsize=8)
+        
+        # 4. График СКО периода по группам
+        axes[1, 1].plot(range(len(rms_period)), rms_period, 'm.-', markersize=8, linewidth=2)
+        axes[1, 1].set_title('СКО периода по группам')
+        axes[1, 1].set_xlabel('Номер группы')
+        axes[1, 1].set_ylabel('СКО (мкс)')
+        axes[1, 1].grid(True, alpha=0.3)
+        # Добавляем значения на точки
+        for i, v in enumerate(rms_period):
+            axes[1, 1].text(i, v, f'{v:.2f}', ha='center', va='bottom', fontsize=8)
+        
+        plt.tight_layout()
+        
+        # Сохраняем график
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        plot_filename = f"arduino_measurements/4plots_session_{data.get('session_id', 'unknown')}_{timestamp}.png"
+        plt.savefig(plot_filename, dpi=150)
+        print(f"График (4 графика) сохранен: {plot_filename}")
+        
+        plt.show(block=False)
+
     def save_to_file(self, data):
         """Сохранение данных в файлы"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -155,60 +219,36 @@ class ArduinoDataReceiver:
         json_filename = f"{data_dir}/session_{session_id}_{timestamp}.json"
         with open(json_filename, 'w') as f:
             json.dump(data, f, indent=2)
-        print(f"Данные сохранены в: {json_filename}")
+        print(f"Данные сохранены в JSON: {json_filename}")
         
-        # Сохраняем CSV с сырыми данными
-        if "response_times_us" in data and "period_times_us" in data:
-            df = pd.DataFrame({
-                'response_us': data['response_times_us'],
-                'period_us': data['period_times_us']
-            })
+        # Сохраняем CSV с усредненными данными (если есть массивы avg и rms)
+        if all(key in data for key in ['avg_response_us', 'rms_response_us', 'avg_period_us', 'rms_period_us']):
+            # Создаем DataFrame с данными по группам
+            groups_count = len(data['avg_response_us'])
+            df_data = {
+                'group_num': list(range(1, groups_count + 1)),
+                'avg_response_us': data['avg_response_us'],
+                'rms_response_us': data['rms_response_us'],
+                'avg_period_us': data['avg_period_us'],
+                'rms_period_us': data['rms_period_us']
+            }
+            
+            # Добавляем общую статистику если есть
+            if 'statistics' in data:
+                stats = data['statistics']
+                resp_stats = stats.get('response_time', {})
+                per_stats = stats.get('period', {})
+                
+                df_data['overall_avg_response'] = [resp_stats.get('overall_avg_us', 0)] * groups_count
+                df_data['overall_rms_response'] = [resp_stats.get('overall_rms_us', 0)] * groups_count
+                df_data['overall_avg_period'] = [per_stats.get('overall_avg_us', 0)] * groups_count
+                df_data['overall_rms_period'] = [per_stats.get('overall_rms_us', 0)] * groups_count
+            
+            df = pd.DataFrame(df_data)
             csv_filename = f"{data_dir}/session_{session_id}_{timestamp}.csv"
             df.to_csv(csv_filename, index=False)
-            print(f"CSV данные сохранены в: {csv_filename}")
-    
-    def plot_data(self, data):
-        """Построение графиков для усредненных данных"""
-        if "avg_response_us" not in data:
-            return
+            print(f"Усредненные данные сохранены в CSV: {csv_filename}")
         
-        avg_response = data['avg_response_us']
-        rms_response = data['rms_response_us']
-        avg_period = data['avg_period_us']
-        rms_period = data['rms_period_us']
-        
-        fig, axes = plt.subplots(ncols=2, nrows=1, figsize=(12, 8),
-                        layout="constrained")
-        fig.suptitle(f"Усредненные измерения - Сессия {data.get('session_id', 'N/A')}")
-        
-        # 1. График среднего времени отклика по группам
-        axes[0].plot(range(len(avg_response)), avg_response, 'b.-', label='Среднее')
-        axes[0].plot(range(len(rms_response)), rms_response, 'r.-', label='СКО')
-        axes[0].set_title('Время отклика по группам')
-        axes[0].set_xlabel('Номер группы')
-        axes[0].set_ylabel('Время (мкс)')
-        axes[0].legend()
-        axes[0].grid(True, alpha=0.3)
-        
-        # 2. График периода по группам
-        axes[1].plot(range(len(avg_period)), avg_period, 'g.-', label='Среднее')
-        axes[1].plot(range(len(rms_period)), rms_period, 'm.-', label='СКО')
-        axes[1].set_title('Период по группам')
-        axes[1].set_xlabel('Номер группы')
-        axes[1].set_ylabel('Период (мкс)')
-        axes[1].legend()
-        axes[1].grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        
-        # Сохраняем график
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        plot_filename = f"arduino_measurements/avg_plot_session_{data.get('session_id', 'unknown')}_{timestamp}.png"
-        plt.savefig(plot_filename, dpi=150)
-        print(f"График сохранен: {plot_filename}")
-        
-        plt.show(block=False)
-    
     def interactive_mode(self):
         """Интерактивный режим работы"""
         print("\n" + "="*60)

@@ -3,7 +3,7 @@
 #include <math.h>
 
 const int PIN_OUT = 7;        // Arduino → Lichee (сигнал "начал")
-const int PIN_IN  = 19;       // Lichee → Arduino (ответный импульс)
+const int PIN_IN  = 20;       // Lichee → Arduino (ответный импульс)
 
 const int GROUP_SIZE = 100;       // Количество импульсов в группе
 const int NUM_GROUPS = 10;        // Количество групп
@@ -11,8 +11,8 @@ const int TOTAL_MEASUREMENTS = GROUP_SIZE * NUM_GROUPS;
 const int SKIP_FIRST = 2;         // Пропустить первые измерения в каждой группе
 
 volatile bool active = false;
-const unsigned int DELAY_MICROSECONDS = 1000;
-const unsigned int MIN_DELAY = DELAY_MICROSECONDS / 2;
+const unsigned int DELAY_MICROSECONDS = 10000;
+const unsigned int MIN_DELAY = DELAY_MICROSECONDS / 10;
 
 // Массивы для статистики
 float groupAvgResponse[NUM_GROUPS];     // Средние значения по группам
@@ -28,17 +28,18 @@ volatile int groupIndex = 0;            // Текущая группа (0-9)
 volatile int measurementInGroup = 0;    // Измерение в текущей группе
 volatile unsigned long previousTime = 0;
 volatile unsigned long t_start = 0;
+volatile int totalFallings = 0;
 
 // Для синхронизации
-unsigned long sessionId = 0;
-bool sendDataFlag = false;
-bool collectingData = false;
+volatile unsigned long sessionId = 0;
+volatile bool sendDataFlag = false;
+volatile bool collectingData = false;
 
 void setup() {
   Serial.begin(115200);
     
   pinMode(PIN_OUT, OUTPUT);
-  pinMode(PIN_IN, INPUT_PULLUP);
+  pinMode(PIN_IN, INPUT);
   
   attachInterrupt(digitalPinToInterrupt(PIN_IN), onResponse, FALLING);
   interrupts();
@@ -52,18 +53,15 @@ void loop() {
   // Проверяем команды от ПК
   checkSerialCommands();
 
-
-   //Serial.print("\nGroup index is "); Serial.print(groupIndex);
-
   // Если флаг установлен, отправляем данные
-  if (sendDataFlag && groupIndex == NUM_GROUPS) {
+  if (sendDataFlag && (groupIndex == NUM_GROUPS)) {
     sendAveragedJsonData();
     sendDataFlag = false;
     collectingData = false;
   }
   
   // Отправляем импульсы, если собираем данные
-  if (collectingData && groupIndex < NUM_GROUPS) {
+  if (collectingData && (groupIndex < NUM_GROUPS)) {
     // Посылаем импульс на Lichee
     t_start = micros();
     active = !active;
@@ -75,8 +73,10 @@ void loop() {
       processGroupStatistics();
       groupIndex++;      
       measurementInGroup = 0;
-      
+      //Serial.println(F("{\"status\":\"data_ready\",\"message\":\"Group is ready!\"}"));
+
       if (groupIndex == NUM_GROUPS) {
+        //noInterrupts();
         Serial.println(F("{\"status\":\"data_ready\",\"message\":\"All groups collected\"}"));
         collectingData = false;
       }
@@ -87,9 +87,11 @@ void loop() {
 void onResponse() {
   if (collectingData && groupIndex < NUM_GROUPS && measurementInGroup < GROUP_SIZE) {
     unsigned long currentTime = micros();
-    
+
+    totalFallings++;
+
     // Защита от двойного срабатывания
-    if ((currentTime - t_start) > 0 && (currentTime - previousTime) > MIN_DELAY) {
+    if (((currentTime - t_start) > 0) && ((currentTime - previousTime) > MIN_DELAY)) {
       currentGroupResponse[measurementInGroup] = currentTime - t_start;
       currentGroupPeriod[measurementInGroup] = currentTime - previousTime;
       previousTime = currentTime;
@@ -99,7 +101,7 @@ void onResponse() {
 }
 
 void processGroupStatistics() {
-  noInterrupts();
+  //noInterrupts();
   
   unsigned long sumResponse = 0;
   unsigned long sumPeriod = 0;
@@ -136,7 +138,7 @@ void processGroupStatistics() {
   groupAvgPeriod[groupIndex] = avgPeriod;
   groupRMSPeriod[groupIndex] = rmsPeriod;
   
-  interrupts();
+  //interrupts();
 }
 
 void checkSerialCommands() {
@@ -151,13 +153,14 @@ void checkSerialCommands() {
       previousTime = 0;
       sendDataFlag = false;
       collectingData = true;
-      Serial.println(F("{\"status\":\"started\",\"message\":\"Measurement started (10 groups of 100 pulses)\"}"));
+      
+      Serial.println(F("{\"status\":\"started\",\"message\":\"Measurement started 10 groups 100 pulses\"}"));
     }
     else if (command == "SEND") {
       // Запрашиваем отправку данных
       if (groupIndex == NUM_GROUPS) {
-        sendDataFlag = true;
         Serial.println(F("{\"status\":\"sending\",\"message\":\"Preparing to send averaged data\"}"));
+        sendDataFlag = true;
       } else {
         Serial.println(F("{\"status\":\"error\",\"message\":\"Data not ready yet\"}"));
       }
@@ -170,7 +173,6 @@ void checkSerialCommands() {
       doc["measurements_in_current_group"] = measurementInGroup;
       doc["session_id"] = sessionId;
       serializeJson(doc, Serial);
-      Serial.println();
     }
     else if (command == "RESET") {
       // Сброс измерений
@@ -190,7 +192,7 @@ void checkSerialCommands() {
 }
 
 void sendAveragedJsonData() {
-  noInterrupts();
+  //noInterrupts();
   
   // Создаем JSON документ
   DynamicJsonDocument doc(4096);
@@ -260,7 +262,5 @@ void sendAveragedJsonData() {
   groupIndex = 0;
   measurementInGroup = 0;
   
-  interrupts();
-  
-  Serial.println(F("{\"status\":\"sent\",\"message\":\"Averaged data sent successfully\"}"));
+  //interrupts();
 }
