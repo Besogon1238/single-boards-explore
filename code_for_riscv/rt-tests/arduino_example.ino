@@ -1,28 +1,26 @@
-// arduino_mega_json_avg.ino
 #include <ArduinoJson.h>
 #include <math.h>
 
 const int PIN_OUT = 7;        // Arduino → Lichee (сигнал "начал")
 const int PIN_IN  = 20;       // Lichee → Arduino (ответный импульс)
 
-const int GROUP_SIZE = 100;       // Количество импульсов в группе
-const int NUM_GROUPS = 10;        // Количество групп
+const int GROUP_SIZE = 50;       // Количество импульсов в группе
+const int NUM_GROUPS = 20;        // Количество групп
 const int TOTAL_MEASUREMENTS = GROUP_SIZE * NUM_GROUPS;
-const int SKIP_FIRST = 2;         // Пропустить первые измерения в каждой группе
 
 volatile bool active = false;
 const unsigned int DELAY_MICROSECONDS = 10000;
-const unsigned int MIN_DELAY = DELAY_MICROSECONDS / 10;
 
 // Массивы для статистики
-float groupAvgResponse[NUM_GROUPS];     // Средние значения по группам
-float groupRMSResponse[NUM_GROUPS];     // СКО по группам
-float groupAvgPeriod[NUM_GROUPS];       // Средние периоды по группам
-float groupRMSPeriod[NUM_GROUPS];       // СКО периодов по группам
+float groupAvgLatency[NUM_GROUPS];     // Средняя задержка по группам
+float groupRMSLatency[NUM_GROUPS];     // СКО задержки по группам
+float groupAvgJitter[NUM_GROUPS];      // Средний джиттер по группам
+float groupRMSJitter[NUM_GROUPS];      // СКО джиттера по группам
 
 // Временные массивы для текущей группы
-volatile unsigned long currentGroupResponse[GROUP_SIZE+SKIP_FIRST];
-volatile unsigned long currentGroupPeriod[GROUP_SIZE+SKIP_FIRST];
+volatile unsigned long currentGroupLatency[GROUP_SIZE];
+volatile unsigned long currentGroupJitter[GROUP_SIZE];
+volatile unsigned long lastResponseTime = 0;  // Для расчета джиттера
 
 volatile int groupIndex = 0;            // Текущая группа (0-9)
 volatile int measurementInGroup = 0;    // Измерение в текущей группе
@@ -35,11 +33,24 @@ volatile unsigned long sessionId = 0;
 volatile bool sendDataFlag = false;
 volatile bool collectingData = false;
 
+// Для прямого доступа к портам
+volatile uint8_t* portOutputRegisterPin7;
+uint8_t pin7Mask;
+volatile uint8_t* portInputRegisterPin20;
+uint8_t pin20Mask;
+
 void setup() {
   Serial.begin(115200);
-    
+  
+  // Инициализация прямого доступа к портам для PIN_OUT (пин 7)
   pinMode(PIN_OUT, OUTPUT);
+  portOutputRegisterPin7 = portOutputRegister(digitalPinToPort(PIN_OUT));
+  pin7Mask = digitalPinToBitMask(PIN_OUT);
+  
+  // Инициализация прямого доступа к портам для PIN_IN (пин 20)
   pinMode(PIN_IN, INPUT);
+  portInputRegisterPin20 = portInputRegister(digitalPinToPort(PIN_IN));
+  pin20Mask = digitalPinToBitMask(PIN_IN);
   
   attachInterrupt(digitalPinToInterrupt(PIN_IN), onResponse, FALLING);
   interrupts();
@@ -65,7 +76,11 @@ void loop() {
     // Посылаем импульс на Lichee
     t_start = micros();
     active = !active;
-    digitalWrite(PIN_OUT, active);
+    if (active) {
+      *portOutputRegisterPin7 |= pin7Mask;   // Установить HIGH
+    } else {
+      *portOutputRegisterPin7 &= ~pin7Mask;  // Установить LOW
+    }
     delayMicroseconds(DELAY_MICROSECONDS);
     
     // Если группа завершена, обрабатываем статистику
@@ -73,10 +88,8 @@ void loop() {
       processGroupStatistics();
       groupIndex++;      
       measurementInGroup = 0;
-      //Serial.println(F("{\"status\":\"data_ready\",\"message\":\"Group is ready!\"}"));
 
       if (groupIndex == NUM_GROUPS) {
-        //noInterrupts();
         Serial.println(F("{\"status\":\"data_ready\",\"message\":\"All groups collected\"}"));
         collectingData = false;
       }
@@ -87,58 +100,59 @@ void loop() {
 void onResponse() {
   if (collectingData && groupIndex < NUM_GROUPS && measurementInGroup < GROUP_SIZE) {
     unsigned long currentTime = micros();
-
-    totalFallings++;
-
-    // Защита от двойного срабатывания
-    if (((currentTime - t_start) > 0) && ((currentTime - previousTime) > MIN_DELAY)) {
-      currentGroupResponse[measurementInGroup] = currentTime - t_start;
-      currentGroupPeriod[measurementInGroup] = currentTime - previousTime;
-      previousTime = currentTime;
-      measurementInGroup++;
+    
+    // Рассчитываем задержку (latency)
+    unsigned long latency = currentTime - t_start;
+    
+    // Рассчитываем джиттер (разница между текущей и предыдущей задержкой)
+    unsigned long jitter = 0;
+    if (measurementInGroup > 0) {
+      jitter = abs((long)(latency - currentGroupLatency[measurementInGroup-1]));
     }
+  
+    currentGroupLatency[measurementInGroup] = latency;
+    currentGroupJitter[measurementInGroup] = jitter;
+    previousTime = currentTime;
+    measurementInGroup++;
+
+    //Serial.println(latency);
+    
   }
 }
 
 void processGroupStatistics() {
-  //noInterrupts();
+  unsigned long sumLatency = 0;
+  unsigned long sumJitter = 0;
   
-  unsigned long sumResponse = 0;
-  unsigned long sumPeriod = 0;
-  
-  // Пропускаем первые SKIP_FIRST измерений в группе
   int validMeasurements = 0;
-  for (int i = SKIP_FIRST; i < GROUP_SIZE+SKIP_FIRST; i++) {
-    sumResponse += currentGroupResponse[i];
-    sumPeriod += currentGroupPeriod[i];
+  for (int i = 0; i < GROUP_SIZE; i++) {
+    sumLatency += currentGroupLatency[i];
+    sumJitter += currentGroupJitter[i];
     validMeasurements++;
   }
   
-  // Среднее арифметическое
-  float avgResponse = (float)sumResponse / validMeasurements;
-  float avgPeriod = (float)sumPeriod / validMeasurements;
+  float avgLatency = (float)sumLatency / validMeasurements;
+  float avgJitter = (float)sumJitter / validMeasurements;
   
-  // СКО (среднеквадратичное отклонение)
-  float sumSqResponse = 0;
-  float sumSqPeriod = 0;
+  // СКО (RMS)
+  float sumSqLatency = 0;
+  float sumSqJitter = 0;
   
-  for (int i = SKIP_FIRST; i < GROUP_SIZE+SKIP_FIRST; i++) {
-    float diffResponse = (float)currentGroupResponse[i] - avgResponse;
-    float diffPeriod = (float)currentGroupPeriod[i] - avgPeriod;
-    sumSqResponse += diffResponse * diffResponse;
-    sumSqPeriod += diffPeriod * diffPeriod;
+  for (int i = 0; i < GROUP_SIZE; i++) {
+    float diffLatency = (float)currentGroupLatency[i] - avgLatency;
+    float diffJitter = (float)currentGroupJitter[i] - avgJitter;
+    sumSqLatency += diffLatency * diffLatency;
+    sumSqJitter += diffJitter * diffJitter;
   }
   
-  float rmsResponse = sqrt(sumSqResponse / validMeasurements);
-  float rmsPeriod = sqrt(sumSqPeriod / validMeasurements);
+  float rmsLatency = sqrt(sumSqLatency / validMeasurements);
+  float rmsJitter = sqrt(sumSqJitter / validMeasurements);
   
   // Сохраняем статистику группы
-  groupAvgResponse[groupIndex] = avgResponse;
-  groupRMSResponse[groupIndex] = rmsResponse;
-  groupAvgPeriod[groupIndex] = avgPeriod;
-  groupRMSPeriod[groupIndex] = rmsPeriod;
-  
-  //interrupts();
+  groupAvgLatency[groupIndex] = avgLatency;
+  groupRMSLatency[groupIndex] = rmsLatency;
+  groupAvgJitter[groupIndex] = avgJitter;
+  groupRMSJitter[groupIndex] = rmsJitter;
 }
 
 void checkSerialCommands() {
@@ -154,7 +168,7 @@ void checkSerialCommands() {
       sendDataFlag = false;
       collectingData = true;
       
-      Serial.println(F("{\"status\":\"started\",\"message\":\"Measurement started 10 groups 100 pulses\"}"));
+      Serial.println(F("{\"status\":\"started\",\"message\":\"Measurement started 20 groups 50 pulses\"}"));
     }
     else if (command == "SEND") {
       // Запрашиваем отправку данных
@@ -192,8 +206,6 @@ void checkSerialCommands() {
 }
 
 void sendAveragedJsonData() {
-  //noInterrupts();
-  
   // Создаем JSON документ
   DynamicJsonDocument doc(4096);
   
@@ -201,66 +213,84 @@ void sendAveragedJsonData() {
   doc["session_id"] = sessionId;
   doc["groups_count"] = NUM_GROUPS;
   doc["measurements_per_group"] = GROUP_SIZE;
-  doc["total_measurements"] = NUM_GROUPS * (GROUP_SIZE);
+  doc["total_measurements"] = NUM_GROUPS * GROUP_SIZE;
   doc["timestamp"] = millis();
   doc["device"] = "Arduino Mega";
   
   // Массивы со статистикой по группам
-  JsonArray avgResponseArray = doc.createNestedArray("avg_response_us");
-  JsonArray rmsResponseArray = doc.createNestedArray("rms_response_us");
-  JsonArray avgPeriodArray = doc.createNestedArray("avg_period_us");
-  JsonArray rmsPeriodArray = doc.createNestedArray("rms_period_us");
+  JsonArray avgLatencyArray = doc.createNestedArray("avg_latency_us");
+  JsonArray rmsLatencyArray = doc.createNestedArray("rms_latency_us");
+  JsonArray avgJitterArray = doc.createNestedArray("avg_jitter_us");
+  JsonArray rmsJitterArray = doc.createNestedArray("rms_jitter_us");
   
   // Общая статистика по всем группам
-  float totalAvgResponse = 0;
-  float totalRMSEesponse = 0;
-  float totalAvgPeriod = 0;
-  float totalRMSPeriod = 0;
+  float totalAvgLatency = 0;
+  float totalRMSLatency = 0;
+  float totalAvgJitter = 0;
+  float totalRMSJitter = 0;
   
   // Заполняем массивы и считаем общую статистику
   for (int i = 0; i < NUM_GROUPS; i++) {
-    avgResponseArray.add(groupAvgResponse[i]);
-    rmsResponseArray.add(groupRMSResponse[i]);
-    avgPeriodArray.add(groupAvgPeriod[i]);
-    rmsPeriodArray.add(groupRMSPeriod[i]);
+    avgLatencyArray.add(groupAvgLatency[i]);
+    rmsLatencyArray.add(groupRMSLatency[i]);
+    avgJitterArray.add(groupAvgJitter[i]);
+    rmsJitterArray.add(groupRMSJitter[i]);
     
-    totalAvgResponse += groupAvgResponse[i];
-    totalRMSEesponse += groupRMSResponse[i];
-    totalAvgPeriod += groupAvgPeriod[i];
-    totalRMSPeriod += groupRMSPeriod[i];
+    totalAvgLatency += groupAvgLatency[i];
+    totalRMSLatency += groupRMSLatency[i];
+    totalAvgJitter += groupAvgJitter[i];
+    totalRMSJitter += groupRMSJitter[i];
   }
   
   // Средние значения по всем группам
-  totalAvgResponse /= NUM_GROUPS;
-  totalRMSEesponse /= NUM_GROUPS;
-  totalAvgPeriod /= NUM_GROUPS;
-  totalRMSPeriod /= NUM_GROUPS;
+  totalAvgLatency /= NUM_GROUPS;
+  totalRMSLatency /= NUM_GROUPS;
+  totalAvgJitter /= NUM_GROUPS;
+  totalRMSJitter /= NUM_GROUPS;
   
   // Статистика
   JsonObject stats = doc.createNestedObject("statistics");
   
-  JsonObject responseStats = stats.createNestedObject("response_time");
-  responseStats["overall_avg_us"] = totalAvgResponse;
-  responseStats["overall_rms_us"] = totalRMSEesponse;
+  JsonObject latencyStats = stats.createNestedObject("latency");
+  latencyStats["overall_avg_us"] = totalAvgLatency;
+  latencyStats["overall_rms_us"] = totalRMSLatency;
+  latencyStats["min_latency_us"] = findMinValue(groupAvgLatency, NUM_GROUPS);
+  latencyStats["max_latency_us"] = findMaxValue(groupAvgLatency, NUM_GROUPS);
   
-  JsonObject periodStats = stats.createNestedObject("period");
-  periodStats["overall_avg_us"] = totalAvgPeriod;
-  periodStats["overall_rms_us"] = totalRMSPeriod;
+  JsonObject jitterStats = stats.createNestedObject("jitter");
+  jitterStats["overall_avg_us"] = totalAvgJitter;
+  jitterStats["overall_rms_us"] = totalRMSJitter;
+  jitterStats["min_jitter_us"] = findMinValue(groupAvgJitter, NUM_GROUPS);
+  jitterStats["max_jitter_us"] = findMaxValue(groupAvgJitter, NUM_GROUPS);
   
   // Информация о параметрах
   JsonObject params = doc.createNestedObject("parameters");
   params["delay_between_pulses_us"] = DELAY_MICROSECONDS;
   params["groups"] = NUM_GROUPS;
   params["measurements_per_group"] = GROUP_SIZE;
-  params["skip_first_per_group"] = SKIP_FIRST;
+
+  doc["latency_variation_us"] = findMaxValue(groupAvgLatency, NUM_GROUPS) - 
+                                 findMinValue(groupAvgLatency, NUM_GROUPS);
+  doc["jitter_variation_us"] = findMaxValue(groupAvgJitter, NUM_GROUPS) - 
+                               findMinValue(groupAvgJitter, NUM_GROUPS);
   
   // Сериализуем и отправляем
   serializeJson(doc, Serial);
   Serial.println();
-  
-  // Сбрасываем для новых измерений
-  groupIndex = 0;
-  measurementInGroup = 0;
-  
-  //interrupts();
+}
+
+float findMinValue(float arr[], int size) {
+  float minVal = arr[0];
+  for (int i = 1; i < size; i++) {
+    if (arr[i] < minVal) minVal = arr[i];
+  }
+  return minVal;
+}
+
+float findMaxValue(float arr[], int size) {
+  float maxVal = arr[0];
+  for (int i = 1; i < size; i++) {
+    if (arr[i] > maxVal) maxVal = arr[i];
+  }
+  return maxVal;
 }

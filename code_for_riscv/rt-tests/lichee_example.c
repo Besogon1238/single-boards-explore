@@ -1,174 +1,179 @@
-#include <stdio.h>
-#include <unistd.h>
-#include <time.h>
+#include <ctype.h>
 #include <gpiod.h>
+#include <sched.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <signal.h>
+#include <string.h>
+#include <stdio.h>
+#include <dirent.h>
 
-#define CHIP_PATH "/dev/gpiochip0"
+#define GPIO_CHIP      "/dev/gpiochip0"
 #define GPIO_LINE 4
-#define GPIO_INPUT_PLACE_IN_LINE 15   // Input pin (GPIO 140)
-#define GPIO_OUTPUT_PLACE_IN_LINE 12  // Output pin (GPIO 144)
+#define GPIO_IN_LINE   15
+#define GPIO_OUT_LINE  12
 
+#define RT_PRIORITY    90
 
-volatile sig_atomic_t stop_flag = 0;
+static volatile int running = 1;
 
-void signal_handler(int sig)
+static void setup_rt(int pid)
 {
-    stop_flag = 1;
+    struct sched_param sp = {
+        .sched_priority = RT_PRIORITY
+    };
+
+    if (sched_setscheduler(pid, SCHED_FIFO, &sp) < 0)
+        perror("sched_setscheduler");
+
+    if (mlockall(MCL_CURRENT | MCL_FUTURE) < 0)
+        perror("mlockall");
 }
 
-int main()
+
+static void sig_handler(int sig)
+{
+    (void)sig;
+    running = 0;
+}
+
+static void set_irq_thread_priority(int irq_number)
+{
+    char thread_name[64];
+    char path[256];
+    char pid_str[16];
+    FILE *fp;
+    DIR *dir;
+    struct dirent *entry;
+    
+    snprintf(thread_name, sizeof(thread_name), "irq/%d-", irq_number);
+    
+    dir = opendir("/proc");
+    if (!dir) {
+        perror("opendir /proc");
+        return;
+    }
+    
+    while ((entry = readdir(dir)) != NULL) {
+        if (!isdigit(entry->d_name[0])) continue;
+        
+        snprintf(path, sizeof(path), "/proc/%s/comm", entry->d_name);
+        fp = fopen(path, "r");
+        if (!fp) continue;
+
+        char comm[64];
+        if (fgets(comm, sizeof(comm), fp)) {
+            comm[strcspn(comm, "\n")] = 0;
+            
+            if (strstr(comm, thread_name)) {
+                pid_t pid = atoi(entry->d_name);
+                
+                setup_rt(pid);
+            }
+        }
+        fclose(fp);
+    }
+    closedir(dir);
+}
+
+int main(void)
 {
     struct gpiod_chip *chip;
+    struct gpiod_line_request *req;
+    struct gpiod_line_settings *in_cfg, *out_cfg;
+    struct gpiod_line_config *line_cfg;
+    struct gpiod_request_config *req_cfg;
     unsigned int offsets[2];
-    struct gpiod_line_settings *in_settings, *out_settings;
-    struct gpiod_line_config *line_config;
-    struct gpiod_request_config *req_config;
-    struct gpiod_line_request *request;
-
-    struct timespec last_rise_time = {0, 0};
-    struct timespec current_time = {0, 0};
-    long interval_ns = 0;
-    int first_pulse = 1;
-
-    signal(SIGINT, signal_handler);
 
     // Calculate offsets
-    offsets[0] = (GPIO_LINE * 32) + GPIO_INPUT_PLACE_IN_LINE;   // Input
-    offsets[1] = (GPIO_LINE * 32) + GPIO_OUTPUT_PLACE_IN_LINE;  // Output
+    offsets[0] = (GPIO_LINE * 32) + GPIO_IN_LINE;   // Input
+    offsets[1] = (GPIO_LINE * 32) + GPIO_OUT_LINE;  // Output
 
-    printf("Opening GPIO chip...\n");
-    chip = gpiod_chip_open(CHIP_PATH);
+    //set_irq_thread_priority(132);
+
+    setup_rt(0);
+
+    signal(SIGINT, sig_handler);
+
+    chip = gpiod_chip_open(GPIO_CHIP);
     if (!chip) {
-        perror("gpiod_chip_open failed");
+        perror("gpiod_chip_open");
         return 1;
     }
 
-    // Configure input pin
-    in_settings = gpiod_line_settings_new();
-    if (!in_settings) {
+    in_cfg = gpiod_line_settings_new();
+    if (!in_cfg) {
         perror("Failed to create input settings");
         gpiod_chip_close(chip);
         return 1;
     }
-    gpiod_line_settings_set_direction(in_settings, GPIOD_LINE_DIRECTION_INPUT);
-    gpiod_line_settings_set_edge_detection(in_settings, GPIOD_LINE_EDGE_BOTH);
 
-    // Configure output pin
-    out_settings = gpiod_line_settings_new();
-    if (!out_settings) {
+    gpiod_line_settings_set_direction(in_cfg, GPIOD_LINE_DIRECTION_INPUT);
+    gpiod_line_settings_set_edge_detection(in_cfg, GPIOD_LINE_EDGE_BOTH);
+
+    out_cfg = gpiod_line_settings_new();
+    if (!out_cfg) {
         perror("Failed to create output settings");
-        gpiod_line_settings_free(in_settings);
-        gpiod_chip_close(chip);
-        return 1;
-    }
-    gpiod_line_settings_set_direction(out_settings, GPIOD_LINE_DIRECTION_OUTPUT);
-
-    // Create line configuration
-    line_config = gpiod_line_config_new();
-    if (!line_config) {
-        perror("Failed to create line config");
-        gpiod_line_settings_free(in_settings);
-        gpiod_line_settings_free(out_settings);
         gpiod_chip_close(chip);
         return 1;
     }
 
-    // Add settings for each line
-    if (gpiod_line_config_add_line_settings(line_config, &offsets[0], 1, in_settings) < 0 ||
-        gpiod_line_config_add_line_settings(line_config, &offsets[1], 1, out_settings) < 0) {
-        perror("Failed to add line settings");
-        gpiod_line_config_free(line_config);
-        gpiod_line_settings_free(in_settings);
-        gpiod_line_settings_free(out_settings);
-        gpiod_chip_close(chip);
-        return 1;
-    }
+    gpiod_line_settings_set_direction(out_cfg, GPIOD_LINE_DIRECTION_OUTPUT);
+    gpiod_line_settings_set_output_value(out_cfg, 0);
+
+    line_cfg = gpiod_line_config_new();
+    gpiod_line_config_add_line_settings(line_cfg, &offsets[0], 1, in_cfg);
+    gpiod_line_config_add_line_settings(line_cfg, &offsets[1], 1, out_cfg);
 
     // Request configuration
-    req_config = gpiod_request_config_new();
-    if (!req_config) {
+    req_cfg = gpiod_request_config_new();
+    if (!req_cfg) {
         perror("Failed to create request config");
-        gpiod_line_config_free(line_config);
-        gpiod_line_settings_free(in_settings);
-        gpiod_line_settings_free(out_settings);
-        gpiod_chip_close(chip);
-        return 1;
-    }
-    gpiod_request_config_set_consumer(req_config, "lichee-response");
-
-    // Request lines
-    request = gpiod_chip_request_lines(chip, req_config, line_config);
-    if (!request) {
-        perror("Failed to request lines");
-        gpiod_request_config_free(req_config);
-        gpiod_line_config_free(line_config);
-        gpiod_line_settings_free(in_settings);
-        gpiod_line_settings_free(out_settings);
+        gpiod_line_config_free(line_cfg);
+        gpiod_line_settings_free(in_cfg);
+        gpiod_line_settings_free(out_cfg);
         gpiod_chip_close(chip);
         return 1;
     }
 
+    gpiod_request_config_set_consumer(req_cfg, "licheeeee");
 
-    struct gpiod_edge_event_buffer *event_buffer;
+    req = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
+    if (!req) {
+        perror("gpiod_chip_request_lines");
+        return 1;
+    }
 
-    int event_buf_size = 1;
-	event_buffer = gpiod_edge_event_buffer_new(event_buf_size);
-	if (!event_buffer) {
-        perror("Failed to create event buffer");
-		return 1;
-	}
+    struct gpiod_edge_event_buffer *evbuf;
+    evbuf = gpiod_edge_event_buffer_new(1);
 
-    printf("Running. Waiting for input on GPIO %u...\n", offsets[0]);
-    printf("Output on GPIO %u\n", offsets[1]);
-
-    int last_value = 0;
     int wait_status = 0;
+    struct gpiod_edge_event *ev;
 
-    int counter = 0;
+    while (running) {
 
-    while (!stop_flag) {
-        wait_status = gpiod_line_request_read_edge_events(request, event_buffer,event_buf_size);;
+        wait_status = gpiod_line_request_read_edge_events(req, evbuf,1);;
 
-        // Read input pin value
-        int value = gpiod_line_request_get_value(request, offsets[0]);
+        ev = gpiod_edge_event_buffer_get_event(evbuf, 0);
 
-        if (value < 0) {
-            perror("Failed to read input");
-            break;
+        //printf("\nEvent!");
+
+        if (gpiod_edge_event_get_event_type(ev) == GPIOD_EDGE_EVENT_RISING_EDGE) {
+          
+            gpiod_line_request_set_value(req, offsets[1], 1);
+        
         }
-
-        // Detect rising edge (0 -> 1)
-        if (last_value == 0 && value == 1) {
-            /*clock_gettime(CLOCK_MONOTONIC, &current_time);
-            if (!first_pulse) {
-                interval_ns = (current_time.tv_sec - last_rise_time.tv_sec) * 1000000000L;
-                interval_ns += (current_time.tv_nsec - last_rise_time.tv_nsec);
-                printf("Rising edge detected! Interval: %ld us \n", interval_ns/1000);
-            } else {
-                printf("First rising edge detected \n");
-                first_pulse = 0;
-                last_rise_time = current_time;
-            }*/
-
-            gpiod_line_request_set_value(request, offsets[1], 1);
-        } else if (last_value == 1 && value == 0) {
-            /*counter++;
-            printf("Falling edge detected! Pulse %d \n",counter);*/
-            gpiod_line_request_set_value(request, offsets[1], 0);
+        else
+        {
+           
+            gpiod_line_request_set_value(req, offsets[1], 0);
+        
         }
-
-        last_value = value;
     }
 
-    // Cleanup
-    gpiod_request_config_free(req_config);
-    gpiod_line_config_free(line_config);
-    gpiod_line_settings_free(in_settings);
-    gpiod_line_settings_free(out_settings);
-    gpiod_line_request_release(request);
+    gpiod_edge_event_buffer_free(evbuf);
+    gpiod_line_request_release(req);
     gpiod_chip_close(chip);
-
-    printf("Exiting...\n");
     return 0;
 }

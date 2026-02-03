@@ -4,7 +4,7 @@
 
 # === НАСТРОЙКИ ===
 REMOTE_USER="root"
-REMOTE_HOST="10.64.129.43"
+REMOTE_HOST="192.168.213.186"
 REMOTE_DIR="/root/rt-tests"
 SOURCE_FILES="*.c *.h"       # Какие файлы отправлять
 TARGET_NAME="lichee_example"
