@@ -14,7 +14,7 @@
 #define GPIO_IN_LINE   15
 #define GPIO_OUT_LINE  12
 
-#define RT_PRIORITY    90
+#define RT_PRIORITY    99
 
 static volatile int running = 1;
 

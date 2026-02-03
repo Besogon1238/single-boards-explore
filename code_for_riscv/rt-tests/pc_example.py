@@ -88,8 +88,7 @@ class ArduinoDataReceiver:
         while time.time() - start_time < timeout:
             message = self.read_json_message()
             if message:
-                # Проверяем, есть ли ключи latency в данных
-                if "avg_latency_us" in message or "avg_response_us" in message:
+                if "avg_latency_us" in message:
                     self.process_data_with_plot(message)
                     return True
                 else:
@@ -116,19 +115,13 @@ class ArduinoDataReceiver:
     
     def process_data_with_plot(self, data):
         """Обработка полученных данных и автоматическое построение графиков"""
-        # Определяем тип данных (старая или новая версия)
         if "avg_latency_us" in data:
-            # Новая версия с latency/jitter
-            self.process_latency_jitter_data(data)
-        elif "avg_response_us" in data:
-            # Старая версия с response/period
-            self.process_response_period_data(data)
+            self.process_mixed_data(data)
         else:
             print("Неизвестный формат данных")
             return False
     
-    def process_latency_jitter_data(self, data):
-        """Обработка данных latency/jitter"""
+    def process_mixed_data(self, data):
         if "session_id" in data:
             self.session_id = data["session_id"]
         
@@ -140,157 +133,157 @@ class ArduinoDataReceiver:
             'session_id': data.get('session_id', 'unknown'),
             'timestamp': datetime.now(),
             'avg_latency_us': data.get('avg_latency_us', []),
-            'rms_latency_us': data.get('rms_latency_us', []),
+            'min_latency_us': data.get('min_latency_us', []),
+            'max_latency_us': data.get('max_latency_us', []),
             'avg_jitter_us': data.get('avg_jitter_us', []),
-            'rms_jitter_us': data.get('rms_jitter_us', []),
             'statistics': data.get('statistics', {})
         }
         
         self.data.append(measurements)
+        
+        # Получаем параметры измерений
+        params = data.get('parameters', {})
+        delay_between_pulses = params.get('delay_between_pulses_us', 0)
+        groups_count = data.get('groups_count', 0)
+        measurements_per_group = data.get('measurements_per_group', 0)
         
         # Выводим статистику
         stats = data.get('statistics', {})
         if stats:
             print("\n" + "="*60)
             print(f"СЕССИЯ: {data.get('session_id', 'N/A')}")
-            print(f"ГРУПП: {data.get('groups_count', 'N/A')} по {data.get('measurements_per_group', 'N/A')} измерений")
+            print(f"КОНФИГУРАЦИЯ: {groups_count} групп × {measurements_per_group} измерений")
+            print(f"ЗАДЕРЖКА МЕЖДУ ИМПУЛЬСАМИ: {delay_between_pulses:,} µs")
             print(f"ВРЕМЯ: {datetime.now().strftime('%H:%M:%S')}")
             print("-"*60)
             
             latency_stats = stats.get('latency', {})
             if latency_stats:
-                print("ОБЩАЯ СТАТИСТИКА LATENCY (мкс):")
-                print(f"  Средняя задержка: {latency_stats.get('overall_avg_us', 0):.2f}")
-                print(f"  Среднее СКО: {latency_stats.get('overall_rms_us', 0):.2f}")
+                print("СТАТИСТИКА LATENCY (мкс):")
+                print(f"  СРЕДНЯЯ (по всем группам): {latency_stats.get('overall_avg_us', 0):.2f}")
+                print(f"  МИНИМАЛЬНАЯ: {latency_stats.get('overall_min_us', 0):.2f}")
+                print(f"  МАКСИМАЛЬНАЯ: {latency_stats.get('overall_max_us', 0):.2f}")
+                print(f"  РАЗБРОС: {latency_stats.get('variation_us', 0):.2f}")
             
             jitter_stats = stats.get('jitter', {})
             if jitter_stats:
-                print("\nОБЩАЯ СТАТИСТИКА JITTER (мкс):")
-                print(f"  Средний джиттер: {jitter_stats.get('overall_avg_us', 0):.2f}")
-                print(f"  Среднее СКО: {jitter_stats.get('overall_rms_us', 0):.2f}")
+                print(f"\nСТАТИСТИКА JITTER (мкс):")
+                print(f"  СРЕДНИЙ (по всем группам): {jitter_stats.get('overall_avg_us', 0):.2f}")
             print("="*60 + "\n")
         
         # Автоматически строим графики
-        self.generate_latency_jitter_plots(data)
+        self.generate_mixed_plots(data)
         
         # Сохраняем в файл
-        self.save_latency_jitter_to_file(data)
+        self.save_mixed_data_to_file(data)
         
         return True
     
-    def process_response_period_data(self, data):
-        """Обработка старых данных response/period (обратная совместимость)"""
-        if "session_id" in data:
-            self.session_id = data["session_id"]
-        
-        self.last_data_received = data
-        
-        measurements = {
-            'session_id': data.get('session_id', 'unknown'),
-            'timestamp': datetime.now(),
-            'avg_response_us': data.get('avg_response_us', []),
-            'rms_response_us': data.get('rms_response_us', []),
-            'avg_period_us': data.get('avg_period_us', []),
-            'rms_period_us': data.get('rms_period_us', []),
-            'statistics': data.get('statistics', {})
-        }
-        
-        self.data.append(measurements)
-        
-        # Выводим статистику
-        stats = data.get('statistics', {})
-        if stats:
-            print("\n" + "="*60)
-            print(f"СЕССИЯ: {data.get('session_id', 'N/A')}")
-            print(f"ГРУПП: {data.get('groups_count', 'N/A')} по {data.get('measurements_per_group', 'N/A')} измерений")
-            print("-"*60)
-            
-            resp_stats = stats.get('response_time', {})
-            if resp_stats:
-                print("ОБЩАЯ СТАТИСТИКА RESPONSE TIME (мкс):")
-                print(f"  Среднее: {resp_stats.get('overall_avg_us', 0):.2f}")
-                print(f"  СКО: {resp_stats.get('overall_rms_us', 0):.2f}")
-            
-            per_stats = stats.get('period', {})
-            if per_stats:
-                print("\nОБЩАЯ СТАТИСТИКА PERIOD (мкс):")
-                print(f"  Среднее: {per_stats.get('overall_avg_us', 0):.2f}")
-                print(f"  СКО: {per_stats.get('overall_rms_us', 0):.2f}")
-            print("="*60 + "\n")
-        
-        # Строим графики для старого формата
-        self.generate_response_period_plots(data)
-        self.save_response_period_to_file(data)
-        
-        return True
-    
-    def generate_latency_jitter_plots(self, data):
-        """Построение графиков для latency/jitter"""
+    def generate_mixed_plots(self, data):
         try:
             # Проверяем наличие необходимых данных
             if "avg_latency_us" not in data:
-                print("Нет данных для построения графиков latency/jitter")
+                print("Нет данных для построения графиков")
                 return
             
             avg_latency = data['avg_latency_us']
-            rms_latency = data['rms_latency_us']
+            min_latency = data['min_latency_us']
+            max_latency = data['max_latency_us']
             avg_jitter = data['avg_jitter_us']
-            rms_jitter = data['rms_jitter_us']
+            
+            # Получаем общие средние значения из статистики
+            stats = data.get('statistics', {})
+            total_avg_latency = stats.get('latency', {}).get('overall_avg_us', 0)
+            total_avg_jitter = stats.get('jitter', {}).get('overall_avg_us', 0)
+            
+            # Получаем параметры измерений
+            params = data.get('parameters', {})
+            delay_between_pulses = params.get('delay_between_pulses_us', 0)
+            groups_count = data.get('groups_count', 0)
+            measurements_per_group = data.get('measurements_per_group', 0)
             
             # Создаем директорию если ее нет
             data_dir = "arduino_measurements"
             if not os.path.exists(data_dir):
                 os.makedirs(data_dir)
             
-            # Создаем 4 графика (2x2)
-            fig, axes = plt.subplots(ncols=2, nrows=2, figsize=(14, 10))
+            # Создаем 2 графика (1x2)
+            fig, axes = plt.subplots(1, 2, figsize=(14, 6))
             
             session_id = data.get('session_id', 'unknown')
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            fig.suptitle(f'Latency & Jitter Analysis\nSession: {session_id} | {timestamp}', 
+            
+            # Обновленный заголовок с delay_between_pulses
+            fig.suptitle(f'Latency & Jitter Analysis | Session: {session_id}\n'
+                        f'Delay: {delay_between_pulses:,} µs | {timestamp}', 
                         fontsize=14, fontweight='bold')
             
-            # 1. График средней latency
+            # Импортируем необходимый модуль
+            from matplotlib.ticker import MaxNLocator
+            
+            # 1. График latency с диапазоном min-max
             if len(avg_latency) > 0:
-                axes[0, 0].plot(range(1, len(avg_latency) + 1), avg_latency, 'b.-', markersize=8, linewidth=2)
-                axes[0, 0].set_title('Average Latency per Group', fontsize=12)
-                axes[0, 0].set_xlabel('Group Number')
-                axes[0, 0].set_ylabel('Latency (µs)')
-                axes[0, 0].grid(True, alpha=0.3)
-                for i, v in enumerate(avg_latency):
-                    axes[0, 0].text(i + 1, v, f'{v:.1f}', ha='center', va='bottom', fontsize=8)
+                # Явно создаем список целых чисел для групп
+                groups = list(range(1, len(avg_latency) + 1))
+                
+                # Основная линия - средние значения
+                line1 = axes[0].plot(groups, avg_latency, 'b.-', markersize=8, linewidth=2, 
+                                label=f'Средняя latency по группам')[0]
+                
+                # Область min-max (заливка)
+                fill = axes[0].fill_between(groups, min_latency, max_latency, 
+                                        alpha=0.2, color='blue', label='Диапазон min-max')
+                
+                # Точки min и max
+                scatter_min = axes[0].scatter(groups, min_latency, color='green', s=20, 
+                                            marker='^', alpha=0.6, label=f'Min: {min(min_latency):.1f} µs')
+                scatter_max = axes[0].scatter(groups, max_latency, color='red', s=20, 
+                                            marker='v', alpha=0.6, label=f'Max: {max(max_latency):.1f} µs')
+                
+                # Линия общего среднего значения latency (горизонтальная)
+                axes[0].axhline(y=total_avg_latency, color='black', linestyle='--', 
+                            linewidth=2, alpha=0.7, 
+                            label=f'Общ. среднее: {total_avg_latency:.1f} µs')
+                
+                # Устанавливаем целочисленные метки на оси X
+                axes[0].xaxis.set_major_locator(MaxNLocator(integer=True))
+                axes[0].set_xticks(groups)  # Явно задаем позиции меток
+                
+                # Обновленный заголовок для первого графика с информацией о группах
+                axes[0].set_title(f'Latency по группам ({groups_count}×{measurements_per_group} измерений)', 
+                                fontsize=12)
+                axes[0].set_xlabel('Номер группы')
+                axes[0].set_ylabel('Latency (µs)')
+                axes[0].grid(True, alpha=0.3)
+                axes[0].legend(loc='best', fontsize=9)
             
-            # 2. График СКО latency
-            if len(rms_latency) > 0:
-                axes[0, 1].plot(range(1, len(rms_latency) + 1), rms_latency, 'r.-', markersize=8, linewidth=2)
-                axes[0, 1].set_title('Latency RMS per Group', fontsize=12)
-                axes[0, 1].set_xlabel('Group Number')
-                axes[0, 1].set_ylabel('RMS (µs)')
-                axes[0, 1].grid(True, alpha=0.3)
-                for i, v in enumerate(rms_latency):
-                    axes[0, 1].text(i + 1, v, f'{v:.2f}', ha='center', va='bottom', fontsize=8)
-            
-            # 3. График среднего jitter
+            # 2. График среднего jitter (простая линия)
             if len(avg_jitter) > 0:
-                axes[1, 0].plot(range(1, len(avg_jitter) + 1), avg_jitter, 'g.-', markersize=8, linewidth=2)
-                axes[1, 0].set_title('Average Jitter per Group', fontsize=12)
-                axes[1, 0].set_xlabel('Group Number')
-                axes[1, 0].set_ylabel('Jitter (µs)')
-                axes[1, 0].grid(True, alpha=0.3)
-                for i, v in enumerate(avg_jitter):
-                    axes[1, 0].text(i + 1, v, f'{v:.1f}', ha='center', va='bottom', fontsize=8)
+                # Используем тот же список групп
+                groups = list(range(1, len(avg_jitter) + 1))
+                
+                # Простая линия для среднего jitter
+                line2 = axes[1].plot(groups, avg_jitter, 'g.-', markersize=8, linewidth=2,
+                                label='Средний jitter по группам')[0]
+                
+                # Линия общего среднего значения jitter (горизонтальная)
+                axes[1].axhline(y=total_avg_jitter, color='black', linestyle='--', 
+                            linewidth=2, alpha=0.7,
+                            label=f'Общ. среднее: {total_avg_jitter:.1f} µs')
+                
+                # Устанавливаем целочисленные метки на оси X
+                axes[1].xaxis.set_major_locator(MaxNLocator(integer=True))
+                axes[1].set_xticks(groups)  # Явно задаем позиции меток
+                
+                # Обновленный заголовок для второго графика
+                axes[1].set_title(f'Jitter по группам ({groups_count}×{measurements_per_group} измерений)', 
+                                fontsize=12)
+                axes[1].set_xlabel('Номер группы')
+                axes[1].set_ylabel('Jitter (µs)')
+                axes[1].grid(True, alpha=0.3)
+                axes[1].legend(loc='best', fontsize=9)
             
-            # 4. График СКО jitter
-            if len(rms_jitter) > 0:
-                axes[1, 1].plot(range(1, len(rms_jitter) + 1), rms_jitter, 'm.-', markersize=8, linewidth=2)
-                axes[1, 1].set_title('Jitter RMS per Group', fontsize=12)
-                axes[1, 1].set_xlabel('Group Number')
-                axes[1, 1].set_ylabel('RMS (µs)')
-                axes[1, 1].grid(True, alpha=0.3)
-                for i, v in enumerate(rms_jitter):
-                    axes[1, 1].text(i + 1, v, f'{v:.2f}', ha='center', va='bottom', fontsize=8)
-            
-            plt.tight_layout()
+            plt.tight_layout(rect=[0, 0, 1, 0.93])  # Немного увеличили отступ сверху для заголовка
             
             # Сохраняем график
             timestamp_file = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -308,82 +301,9 @@ class ArduinoDataReceiver:
             
         except Exception as e:
             print(f"Ошибка при построении графиков: {e}")
-    
-    def generate_response_period_plots(self, data):
-        """Построение графиков для старого формата response/period"""
-        try:
-            if "avg_response_us" not in data:
-                print("Нет данных для построения графиков response/period")
-                return
             
-            avg_response = data['avg_response_us']
-            rms_response = data['rms_response_us']
-            avg_period = data['avg_period_us']
-            rms_period = data['rms_period_us']
-            
-            # Создаем директорию если ее нет
-            data_dir = "arduino_measurements"
-            if not os.path.exists(data_dir):
-                os.makedirs(data_dir)
-            
-            # Создаем графики
-            fig, axes = plt.subplots(ncols=2, nrows=2, figsize=(14, 10))
-            
-            session_id = data.get('session_id', 'unknown')
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            fig.suptitle(f'Response Time & Period Analysis\nSession: {session_id} | {timestamp}', 
-                        fontsize=14, fontweight='bold')
-            
-            # 1. График среднего response time
-            if len(avg_response) > 0:
-                axes[0, 0].plot(range(1, len(avg_response) + 1), avg_response, 'b.-', markersize=8, linewidth=2)
-                axes[0, 0].set_title('Average Response Time per Group', fontsize=12)
-                axes[0, 0].set_xlabel('Group Number')
-                axes[0, 0].set_ylabel('Response Time (µs)')
-                axes[0, 0].grid(True, alpha=0.3)
-            
-            # 2. График СКО response time
-            if len(rms_response) > 0:
-                axes[0, 1].plot(range(1, len(rms_response) + 1), rms_response, 'r.-', markersize=8, linewidth=2)
-                axes[0, 1].set_title('Response Time RMS per Group', fontsize=12)
-                axes[0, 1].set_xlabel('Group Number')
-                axes[0, 1].set_ylabel('RMS (µs)')
-                axes[0, 1].grid(True, alpha=0.3)
-            
-            # 3. График среднего периода
-            if len(avg_period) > 0:
-                axes[1, 0].plot(range(1, len(avg_period) + 1), avg_period, 'g.-', markersize=8, linewidth=2)
-                axes[1, 0].set_title('Average Period per Group', fontsize=12)
-                axes[1, 0].set_xlabel('Group Number')
-                axes[1, 0].set_ylabel('Period (µs)')
-                axes[1, 0].grid(True, alpha=0.3)
-            
-            # 4. График СКО периода
-            if len(rms_period) > 0:
-                axes[1, 1].plot(range(1, len(rms_period) + 1), rms_period, 'm.-', markersize=8, linewidth=2)
-                axes[1, 1].set_title('Period RMS per Group', fontsize=12)
-                axes[1, 1].set_xlabel('Group Number')
-                axes[1, 1].set_ylabel('RMS (µs)')
-                axes[1, 1].grid(True, alpha=0.3)
-            
-            plt.tight_layout()
-            
-            # Сохраняем график
-            timestamp_file = datetime.now().strftime("%Y%m%d_%H%M%S")
-            plot_filename = f"{data_dir}/response_period_session_{session_id}_{timestamp_file}.png"
-            plt.savefig(plot_filename, dpi=150)
-            print(f"✓ Графики сохранены: {plot_filename}")
-            
-            plt.show(block=False)
-            plt.pause(0.1)
-            time.sleep(3)
-            plt.close(fig)
-            
-        except Exception as e:
-            print(f"Ошибка при построении графиков: {e}")
-    
-    def save_latency_jitter_to_file(self, data):
-        """Сохранение данных latency/jitter в файлы"""
+    def save_mixed_data_to_file(self, data):
+        """Сохранение данных в файлы"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             session_id = data.get('session_id', 'unknown')
@@ -400,55 +320,21 @@ class ArduinoDataReceiver:
             print(f"✓ JSON сохранен: {json_filename}")
             
             # Сохраняем CSV если есть данные
-            if all(key in data for key in ['avg_latency_us', 'rms_latency_us', 
-                                          'avg_jitter_us', 'rms_jitter_us']):
+            if all(key in data for key in ['avg_latency_us', 'min_latency_us', 'max_latency_us',
+                                          'avg_jitter_us']):
                 groups_count = len(data['avg_latency_us'])
                 df_data = {
                     'group_num': list(range(1, groups_count + 1)),
                     'avg_latency_us': data['avg_latency_us'],
-                    'rms_latency_us': data['rms_latency_us'],
-                    'avg_jitter_us': data['avg_jitter_us'],
-                    'rms_jitter_us': data['rms_jitter_us']
+                    'min_latency_us': data['min_latency_us'],
+                    'max_latency_us': data['max_latency_us'],
+                    'latency_variation_us': [max_val - min_val for max_val, min_val in 
+                                           zip(data['max_latency_us'], data['min_latency_us'])],
+                    'avg_jitter_us': data['avg_jitter_us']
                 }
                 
                 df = pd.DataFrame(df_data)
                 csv_filename = f"{data_dir}/latency_jitter_session_{session_id}_{timestamp}.csv"
-                df.to_csv(csv_filename, index=False)
-                print(f"✓ CSV сохранен: {csv_filename}")
-                
-        except Exception as e:
-            print(f"Ошибка при сохранении файлов: {e}")
-    
-    def save_response_period_to_file(self, data):
-        """Сохранение старых данных response/period"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            session_id = data.get('session_id', 'unknown')
-            
-            data_dir = "arduino_measurements"
-            if not os.path.exists(data_dir):
-                os.makedirs(data_dir)
-            
-            # JSON
-            json_filename = f"{data_dir}/response_period_session_{session_id}_{timestamp}.json"
-            with open(json_filename, 'w') as f:
-                json.dump(data, f, indent=2)
-            print(f"✓ JSON сохранен: {json_filename}")
-            
-            # CSV
-            if all(key in data for key in ['avg_response_us', 'rms_response_us',
-                                          'avg_period_us', 'rms_period_us']):
-                groups_count = len(data['avg_response_us'])
-                df_data = {
-                    'group_num': list(range(1, groups_count + 1)),
-                    'avg_response_us': data['avg_response_us'],
-                    'rms_response_us': data['rms_response_us'],
-                    'avg_period_us': data['avg_period_us'],
-                    'rms_period_us': data['rms_period_us']
-                }
-                
-                df = pd.DataFrame(df_data)
-                csv_filename = f"{data_dir}/response_period_session_{session_id}_{timestamp}.csv"
                 df.to_csv(csv_filename, index=False)
                 print(f"✓ CSV сохранен: {csv_filename}")
                 
@@ -479,7 +365,7 @@ class ArduinoDataReceiver:
                         print(f"\n✓ [ARDUINO] {message.get('message', '')}")
                     elif status == 'error':
                         print(f"\n✗ [ARDUINO] Ошибка: {message.get('message', '')}")
-                    elif "avg_latency_us" in message or "avg_response_us" in message:
+                    elif "avg_latency_us" in message:
                         print("\n✓ [ARDUINO] Получены данные измерений!")
                         # Автоматическая обработка
                         self.process_data_with_plot(message)
@@ -534,13 +420,15 @@ class ArduinoDataReceiver:
                 print("Соединение закрыто")
     
     def create_summary_plot(self):
-        """Сводный график всех сессий"""
         if not self.data:
             print("Нет данных для построения сводного графика")
             return
         
         try:
-            fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+            fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+            
+            # Импортируем необходимый модуль
+            from matplotlib.ticker import MaxNLocator
             
             for i, session in enumerate(self.data):
                 session_id = session.get('session_id', f'Session_{i}')
@@ -552,37 +440,30 @@ class ArduinoDataReceiver:
                     avg_jitter = session['avg_jitter_us']
                     
                     if avg_latency and len(avg_latency) > 0:
-                        axes[0, 0].plot(range(len(avg_latency)), avg_latency, '.-', 
-                                      label=session_id, alpha=0.7)
+                        groups = list(range(1, len(avg_latency) + 1))
+                        axes[0].plot(groups, avg_latency, '.-', 
+                                    label=session_id, alpha=0.7)
                     
                     if avg_jitter and len(avg_jitter) > 0:
-                        axes[0, 1].plot(range(len(avg_jitter)), avg_jitter, '.-', 
-                                      label=session_id, alpha=0.7)
-                
-                elif 'avg_response_us' in session:
-                    # Response/Period данные
-                    avg_response = session['avg_response_us']
-                    avg_period = session['avg_period_us']
-                    
-                    if avg_response and len(avg_response) > 0:
-                        axes[0, 0].plot(range(len(avg_response)), avg_response, '.-', 
-                                      label=session_id, alpha=0.7)
-                    
-                    if avg_period and len(avg_period) > 0:
-                        axes[0, 1].plot(range(len(avg_period)), avg_period, '.-', 
-                                      label=session_id, alpha=0.7)
+                        groups = list(range(1, len(avg_jitter) + 1))
+                        axes[1].plot(groups, avg_jitter, '.-', 
+                                    label=session_id, alpha=0.7)
             
-            axes[0, 0].set_title('Сравнение Latency/Response между сессиями')
-            axes[0, 0].set_xlabel('Номер группы')
-            axes[0, 0].set_ylabel('µs')
-            axes[0, 0].legend()
-            axes[0, 0].grid(True, alpha=0.3)
+            # Устанавливаем целочисленные метки на обеих осях X
+            axes[0].xaxis.set_major_locator(MaxNLocator(integer=True))
+            axes[1].xaxis.set_major_locator(MaxNLocator(integer=True))
             
-            axes[0, 1].set_title('Сравнение Jitter/Period между сессиями')
-            axes[0, 1].set_xlabel('Номер группы')
-            axes[0, 1].set_ylabel('µs')
-            axes[0, 1].legend()
-            axes[0, 1].grid(True, alpha=0.3)
+            axes[0].set_title('Сравнение среднего Latency между сессиями')
+            axes[0].set_xlabel('Номер группы')
+            axes[0].set_ylabel('Latency (µs)')
+            axes[0].legend()
+            axes[0].grid(True, alpha=0.3)
+            
+            axes[1].set_title('Сравнение среднего Jitter между сессиями')
+            axes[1].set_xlabel('Номер группы')
+            axes[1].set_ylabel('Jitter (µs)')
+            axes[1].legend()
+            axes[1].grid(True, alpha=0.3)
             
             plt.tight_layout()
             

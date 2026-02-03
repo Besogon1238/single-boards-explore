@@ -1,32 +1,27 @@
 #include <ArduinoJson.h>
-#include <math.h>
 
 const int PIN_OUT = 7;        // Arduino → Lichee (сигнал "начал")
 const int PIN_IN  = 20;       // Lichee → Arduino (ответный импульс)
 
-const int GROUP_SIZE = 50;       // Количество импульсов в группе
-const int NUM_GROUPS = 20;        // Количество групп
-const int TOTAL_MEASUREMENTS = GROUP_SIZE * NUM_GROUPS;
+const int GROUP_SIZE = 500;       // Количество импульсов в группе
+const int NUM_GROUPS = 50;        // Количество групп
 
 volatile bool active = false;
-const unsigned int DELAY_MICROSECONDS = 10000;
+const unsigned int DELAY_MICROSECONDS = 300;
 
 // Массивы для статистики
 float groupAvgLatency[NUM_GROUPS];     // Средняя задержка по группам
-float groupRMSLatency[NUM_GROUPS];     // СКО задержки по группам
-float groupAvgJitter[NUM_GROUPS];      // Средний джиттер по группам
-float groupRMSJitter[NUM_GROUPS];      // СКО джиттера по группам
+float groupMinLatency[NUM_GROUPS];     // Минимальная задержка по группам
+float groupMaxLatency[NUM_GROUPS];     // Максимальная задержка по группам
+float groupAvgJitter[NUM_GROUPS];      // ТОЛЬКО СРЕДНИЙ джиттер по группам
 
 // Временные массивы для текущей группы
 volatile unsigned long currentGroupLatency[GROUP_SIZE];
 volatile unsigned long currentGroupJitter[GROUP_SIZE];
-volatile unsigned long lastResponseTime = 0;  // Для расчета джиттера
 
-volatile int groupIndex = 0;            // Текущая группа (0-9)
+volatile uint8_t groupIndex = 0;            // Текущая группа (0-9)
 volatile int measurementInGroup = 0;    // Измерение в текущей группе
-volatile unsigned long previousTime = 0;
 volatile unsigned long t_start = 0;
-volatile int totalFallings = 0;
 
 // Для синхронизации
 volatile unsigned long sessionId = 0;
@@ -112,47 +107,38 @@ void onResponse() {
   
     currentGroupLatency[measurementInGroup] = latency;
     currentGroupJitter[measurementInGroup] = jitter;
-    previousTime = currentTime;
     measurementInGroup++;
-
-    //Serial.println(latency);
-    
   }
 }
 
 void processGroupStatistics() {
-  unsigned long sumLatency = 0;
-  unsigned long sumJitter = 0;
+  if (GROUP_SIZE == 0) return;
   
-  int validMeasurements = 0;
-  for (int i = 0; i < GROUP_SIZE; i++) {
-    sumLatency += currentGroupLatency[i];
+  // Для latency считаем min, max и среднее
+  unsigned long minLatency = currentGroupLatency[0];
+  unsigned long maxLatency = currentGroupLatency[0];
+  unsigned long sumLatency = currentGroupLatency[0];
+  
+  // Для jitter считаем только среднее
+  unsigned long sumJitter = currentGroupJitter[0];
+  
+  // Обрабатываем остальные измерения
+  for (int i = 1; i < GROUP_SIZE; i++) {
+    unsigned long latency = currentGroupLatency[i];
+    
+    // Обновляем min/max для latency
+    if (latency < minLatency) minLatency = latency;
+    if (latency > maxLatency) maxLatency = latency;
+    
+    sumLatency += latency;
     sumJitter += currentGroupJitter[i];
-    validMeasurements++;
   }
-  
-  float avgLatency = (float)sumLatency / validMeasurements;
-  float avgJitter = (float)sumJitter / validMeasurements;
-  
-  // СКО (RMS)
-  float sumSqLatency = 0;
-  float sumSqJitter = 0;
-  
-  for (int i = 0; i < GROUP_SIZE; i++) {
-    float diffLatency = (float)currentGroupLatency[i] - avgLatency;
-    float diffJitter = (float)currentGroupJitter[i] - avgJitter;
-    sumSqLatency += diffLatency * diffLatency;
-    sumSqJitter += diffJitter * diffJitter;
-  }
-  
-  float rmsLatency = sqrt(sumSqLatency / validMeasurements);
-  float rmsJitter = sqrt(sumSqJitter / validMeasurements);
   
   // Сохраняем статистику группы
-  groupAvgLatency[groupIndex] = avgLatency;
-  groupRMSLatency[groupIndex] = rmsLatency;
-  groupAvgJitter[groupIndex] = avgJitter;
-  groupRMSJitter[groupIndex] = rmsJitter;
+  groupAvgLatency[groupIndex] = (float)sumLatency / GROUP_SIZE;
+  groupMinLatency[groupIndex] = (float)minLatency;
+  groupMaxLatency[groupIndex] = (float)maxLatency;
+  groupAvgJitter[groupIndex] = (float)sumJitter / (GROUP_SIZE-1);
 }
 
 void checkSerialCommands() {
@@ -164,7 +150,6 @@ void checkSerialCommands() {
       // Начинаем сбор данных
       groupIndex = 0;
       measurementInGroup = 0;
-      previousTime = 0;
       sendDataFlag = false;
       collectingData = true;
       
@@ -192,7 +177,6 @@ void checkSerialCommands() {
       // Сброс измерений
       groupIndex = 0;
       measurementInGroup = 0;
-      previousTime = 0;
       sendDataFlag = false;
       collectingData = false;
       Serial.println(F("{\"status\":\"reset\",\"message\":\"Measurements reset\"}"));
@@ -207,7 +191,7 @@ void checkSerialCommands() {
 
 void sendAveragedJsonData() {
   // Создаем JSON документ
-  DynamicJsonDocument doc(4096);
+  DynamicJsonDocument doc(3072);
   
   // Базовая информация
   doc["session_id"] = sessionId;
@@ -219,49 +203,46 @@ void sendAveragedJsonData() {
   
   // Массивы со статистикой по группам
   JsonArray avgLatencyArray = doc.createNestedArray("avg_latency_us");
-  JsonArray rmsLatencyArray = doc.createNestedArray("rms_latency_us");
+  JsonArray minLatencyArray = doc.createNestedArray("min_latency_us");
+  JsonArray maxLatencyArray = doc.createNestedArray("max_latency_us");
   JsonArray avgJitterArray = doc.createNestedArray("avg_jitter_us");
-  JsonArray rmsJitterArray = doc.createNestedArray("rms_jitter_us");
   
   // Общая статистика по всем группам
   float totalAvgLatency = 0;
-  float totalRMSLatency = 0;
+  float totalMinLatency = groupMinLatency[0];
+  float totalMaxLatency = groupMaxLatency[0];
   float totalAvgJitter = 0;
-  float totalRMSJitter = 0;
   
   // Заполняем массивы и считаем общую статистику
   for (int i = 0; i < NUM_GROUPS; i++) {
     avgLatencyArray.add(groupAvgLatency[i]);
-    rmsLatencyArray.add(groupRMSLatency[i]);
+    minLatencyArray.add(groupMinLatency[i]);
+    maxLatencyArray.add(groupMaxLatency[i]);
     avgJitterArray.add(groupAvgJitter[i]);
-    rmsJitterArray.add(groupRMSJitter[i]);
     
     totalAvgLatency += groupAvgLatency[i];
-    totalRMSLatency += groupRMSLatency[i];
     totalAvgJitter += groupAvgJitter[i];
-    totalRMSJitter += groupRMSJitter[i];
+    
+    // Обновляем общие минимумы и максимумы для latency
+    if (groupMinLatency[i] < totalMinLatency) totalMinLatency = groupMinLatency[i];
+    if (groupMaxLatency[i] > totalMaxLatency) totalMaxLatency = groupMaxLatency[i];
   }
   
   // Средние значения по всем группам
   totalAvgLatency /= NUM_GROUPS;
-  totalRMSLatency /= NUM_GROUPS;
   totalAvgJitter /= NUM_GROUPS;
-  totalRMSJitter /= NUM_GROUPS;
   
   // Статистика
   JsonObject stats = doc.createNestedObject("statistics");
   
   JsonObject latencyStats = stats.createNestedObject("latency");
   latencyStats["overall_avg_us"] = totalAvgLatency;
-  latencyStats["overall_rms_us"] = totalRMSLatency;
-  latencyStats["min_latency_us"] = findMinValue(groupAvgLatency, NUM_GROUPS);
-  latencyStats["max_latency_us"] = findMaxValue(groupAvgLatency, NUM_GROUPS);
+  latencyStats["overall_min_us"] = totalMinLatency;
+  latencyStats["overall_max_us"] = totalMaxLatency;
+  latencyStats["variation_us"] = totalMaxLatency - totalMinLatency;
   
   JsonObject jitterStats = stats.createNestedObject("jitter");
   jitterStats["overall_avg_us"] = totalAvgJitter;
-  jitterStats["overall_rms_us"] = totalRMSJitter;
-  jitterStats["min_jitter_us"] = findMinValue(groupAvgJitter, NUM_GROUPS);
-  jitterStats["max_jitter_us"] = findMaxValue(groupAvgJitter, NUM_GROUPS);
   
   // Информация о параметрах
   JsonObject params = doc.createNestedObject("parameters");
@@ -269,28 +250,7 @@ void sendAveragedJsonData() {
   params["groups"] = NUM_GROUPS;
   params["measurements_per_group"] = GROUP_SIZE;
 
-  doc["latency_variation_us"] = findMaxValue(groupAvgLatency, NUM_GROUPS) - 
-                                 findMinValue(groupAvgLatency, NUM_GROUPS);
-  doc["jitter_variation_us"] = findMaxValue(groupAvgJitter, NUM_GROUPS) - 
-                               findMinValue(groupAvgJitter, NUM_GROUPS);
-  
   // Сериализуем и отправляем
   serializeJson(doc, Serial);
   Serial.println();
-}
-
-float findMinValue(float arr[], int size) {
-  float minVal = arr[0];
-  for (int i = 1; i < size; i++) {
-    if (arr[i] < minVal) minVal = arr[i];
-  }
-  return minVal;
-}
-
-float findMaxValue(float arr[], int size) {
-  float maxVal = arr[0];
-  for (int i = 1; i < size; i++) {
-    if (arr[i] > maxVal) maxVal = arr[i];
-  }
-  return maxVal;
 }
